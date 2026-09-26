@@ -5,6 +5,8 @@ automatically. Use ``settings.openai_api_key.get_secret_value()`` only where
 the raw value is needed (e.g. passed to a library).
 """
 
+from __future__ import annotations
+
 from decimal import Decimal
 
 from pydantic import SecretStr
@@ -29,8 +31,9 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr
     gemini_api_key: SecretStr
     admin_token: SecretStr
-    langfuse_public_key: SecretStr
-    langfuse_secret_key: SecretStr
+    # Minted by the self-hosted Langfuse instance in session D; optional until then.
+    langfuse_public_key: SecretStr | None = None
+    langfuse_secret_key: SecretStr | None = None
     grafana_admin_password: SecretStr
 
     # Non-secret operational config

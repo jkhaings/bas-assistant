@@ -8,7 +8,9 @@ MYPY    := uv run mypy
 
 # ── required env variable names (values never printed) ──────────────────────
 REQUIRED_VARS := OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY ADMIN_TOKEN \
-                 LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY GRAFANA_ADMIN_PASSWORD
+                 GRAFANA_ADMIN_PASSWORD
+# Optional until session D mints them from the self-hosted Langfuse instance
+OPTIONAL_LANGFUSE_VARS := LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
 
 help:
 	@echo "Targets: up down test test-int lint format check-env preflight ingest eval redteam"
@@ -32,6 +34,10 @@ check-env:
 	if [ -n "$$MISSING" ]; then \
 	  echo "ERROR: Empty variables (fill them with nano, not echo):$$MISSING" >&2; exit 1; \
 	fi; \
+	for VAR in $(OPTIONAL_LANGFUSE_VARS); do \
+	  VAL=$$(eval echo \$$$$VAR); \
+	  if [ -z "$$VAL" ]; then echo "WARN: $$VAR empty (expected until session D)"; fi; \
+	done; \
 	echo "check-env: OK"
 
 # ── docker ───────────────────────────────────────────────────────────────────

@@ -107,6 +107,24 @@ def test_settings_repr_and_dumps_mask_secret_values(monkeypatch: pytest.MonkeyPa
             assert val not in as_str, f"Secret value for {key_name} leaked in repr/dump"
 
 
+def test_settings_starts_without_langfuse_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings initialises successfully when Langfuse keys are absent (pre-session-D)."""
+    fakes = _load_fixture()
+    monkeypatch.setenv("OPENAI_API_KEY", fakes["FAKE_OPENAI"])
+    monkeypatch.setenv("ANTHROPIC_API_KEY", fakes["FAKE_ANTHROPIC"])
+    monkeypatch.setenv("GEMINI_API_KEY", fakes["FAKE_GEMINI"])
+    monkeypatch.setenv("ADMIN_TOKEN", "at-no-langfuse")
+    monkeypatch.setenv("GRAFANA_ADMIN_PASSWORD", "gp-no-langfuse")
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+
+    from bas_assistant.settings import Settings  # noqa: PLC0415
+
+    s = Settings()
+    assert s.langfuse_public_key is None
+    assert s.langfuse_secret_key is None
+
+
 def test_settings_reads_secrets_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Settings.get_secret_value() returns what was in the env var."""
     fakes = _load_fixture()
