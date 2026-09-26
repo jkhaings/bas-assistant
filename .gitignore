@@ -1,0 +1,51 @@
+# secrets — never commit these
+.env
+.env.*
+*.env
+!.env.example
+CLAUDE.local.md
+
+# data
+data/raw/
+
+# outputs
+outputs/*.png
+
+# keys / certs
+*.pem
+*.key
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+dist/
+build/
+*.egg-info/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# node
+node_modules/
+.npm/
+
+# docker / compose overrides
+.env.docker
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# claude local config
+.claude/settings.local.json

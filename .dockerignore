@@ -1,0 +1,30 @@
+# secrets
+.env
+.env.*
+*.env
+~/.bas-assistant.env
+
+# git history
+.git/
+.github/
+
+# dev artifacts
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+node_modules/
+
+# data (large, not needed in image)
+data/raw/
+outputs/
+
+# claude config
+.claude/
+
+# tests / dev docs
+tests/
+docs/
+eval/

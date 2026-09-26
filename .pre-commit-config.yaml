@@ -1,0 +1,39 @@
+# pre-commit hooks — install with: uv run pre-commit install
+
+repos:
+  # ── key shape grep (catches what gitleaks misses on staged content) ──────
+  - repo: local
+    hooks:
+      - id: no-key-shapes
+        name: No API key shapes in staged files
+        language: pygrep
+        entry: >-
+          (?<![A-Za-z0-9])(?:sk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}|AIza[0-9A-Za-z_\-]{35}|ghp_[A-Za-z0-9]{36})
+        exclude: >-
+          (?x)^(
+            \.env\.example|
+            tests/unit/fixtures/fake_keys\.txt
+          )$
+
+  # ── gitleaks ─────────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: gitleaks — scan staged diff for secrets
+        language: system
+        entry: gitleaks git --pre-commit --staged --redact --no-banner
+        pass_filenames: false
+
+  # ── ruff ─────────────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        language: system
+        entry: uv run ruff format
+        types: [python]
+      - id: ruff-check
+        name: ruff check --fix
+        language: system
+        entry: uv run ruff check --fix
+        types: [python]

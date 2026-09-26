@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Clearly-fake fixture values and .env.example names-only file"
+paths = [
+    '''(?i)^\.env\.example$''',
+    '''(?i)^tests[/\\]unit[/\\]fixtures[/\\]fake_keys\.txt$''',
+]

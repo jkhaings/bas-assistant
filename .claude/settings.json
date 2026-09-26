@@ -1,0 +1,96 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make *)",
+      "Bash(uv *)",
+      "Bash(pytest *)",
+      "Bash(ruff *)",
+      "Bash(mypy *)",
+      "Bash(npm test *)",
+      "Bash(npm run build *)",
+      "Bash(docker compose up *)",
+      "Bash(docker compose down *)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose config --quiet *)",
+      "Bash(docker compose config -q *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(git worktree *)",
+      "Bash(alembic *)",
+      "Bash(curl http://localhost:*)",
+      "Bash(curl http://127.0.0.1:*)"
+    ],
+    "deny": [
+      "Read(~/.bas-assistant.env)",
+      "Read(//etc/bas-assistant.env)",
+      "Read(**/.env)",
+      "Read(**/*.env)",
+      "Read(**/.env.*)",
+      "Read(!**/.env.example)",
+      "Bash(cat *bas-assistant.env*)",
+      "Bash(echo *bas-assistant.env*)",
+      "Bash(head *bas-assistant.env*)",
+      "Bash(tail *bas-assistant.env*)",
+      "Bash(cat *.env *)",
+      "Bash(printenv *)",
+      "Bash(git push * --force *)",
+      "Bash(git push *-f *)",
+      "Bash(git merge *)",
+      "Bash(gh run rerun *)",
+      "Bash(gh workflow run *)",
+      "WebFetch(domain:support.deltacontrols.com)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project --python 3.12 python $CLAUDE_PROJECT_DIR/.claude/hooks/guard_bash.py",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit *)",
+            "command": "uv run --no-project --python 3.12 python $CLAUDE_PROJECT_DIR/.claude/hooks/gitleaks_on_commit.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project --python 3.12 python $CLAUDE_PROJECT_DIR/.claude/hooks/block_key_shapes.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project --python 3.12 python $CLAUDE_PROJECT_DIR/.claude/hooks/ruff_on_edit.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
