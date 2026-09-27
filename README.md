@@ -7,7 +7,8 @@ the assistant answers from ingested public documentation (Delta Controls catalog
 pages) with page citations, abstains when the documents don't cover it, and can propose an internal
 ticket that a human approves. Everything is permission-filtered, cost-metered, traced, and evaluated.
 
-Built as a portfolio project. Not affiliated with Delta Controls.
+Built as a portfolio project. Not affiliated with Delta Controls. All copyrights or whatever rights belong
+to Delta Controls, please don't sue me LOL.
 
 ## How to run locally
 
