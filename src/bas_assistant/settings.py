@@ -35,6 +35,36 @@ class Settings(BaseSettings):
     langfuse_public_key: SecretStr | None = None
     langfuse_secret_key: SecretStr | None = None
     grafana_admin_password: SecretStr
+    postgres_password: SecretStr
 
     # Non-secret operational config
     daily_usd_cap: Decimal = Decimal("3")
+
+    # Postgres — host/port default to the compose service name and its internal
+    # port; integration tests override via env to reach the published host port.
+    postgres_host: str = "postgres"
+    postgres_port: int = 5432
+    postgres_user: str = "bas_assistant"
+    postgres_db: str = "bas_assistant"
+
+    # Embedding provider — session B repoints these at the LiteLLM proxy's
+    # `embed` alias by env change only; no code here talks to a vendor SDK.
+    embed_base_url: str = "https://api.openai.com/v1"
+    embed_model: str = "text-embedding-3-small"
+    embed_usd_per_mtok: Decimal = Decimal("0.02")
+
+    # Retrieval
+    rerank_model: str = "BAAI/bge-reranker-base"
+    # Tuned in session A against the real corpus (see data/top20_questions.md):
+    # the 15 answerable questions' top score was 0.55-0.99; the out-of-scope
+    # and ACL-blocked-role cases topped out at 0.46. Below this, /ask abstains.
+    rerank_threshold: float = 0.5
+
+    @property
+    def database_url(self) -> str:
+        """Postgres DSN for SQLAlchemy, using the psycopg 3 driver."""
+        return (
+            f"postgresql+psycopg://{self.postgres_user}:"
+            f"{self.postgres_password.get_secret_value()}@"
+            f"{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )

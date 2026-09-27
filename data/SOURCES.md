@@ -20,12 +20,15 @@ Starter list (12 documents):
 - UNOnext-Datasheet.pdf
 - UNOnext-MODBUS-RTU-Protocol.pdf
 
-Session A also crawls product pages for additional PDF links.
+Session A also discovers additional PDF links from every product page (see below), capped at 40
+PDFs total, filtered to filenames that look like catalog/datasheet/protocol/spec sheets (forced-labour
+reports and old conference decks linked from the same pages are excluded by that filter).
 
 ## Delta Controls product pages
 
-`https://deltacontrols.com/products/` — follow "Load More". robots.txt respected.
-One request per second. Raw HTML cached in `data/raw/` (gitignored).
+Discovered from `https://deltacontrols.com/product-sitemap.xml` (42 URLs as of Sep 26) — the
+robots.txt-endorsed path, used instead of reverse-engineering the "Load More" AJAX call. Each page's
+`.downloads-section .downloads-list a.download-link` is scanned for `.pdf` links.
 
 ## O3 help center
 
@@ -38,8 +41,13 @@ its URLs to any model. Claude is denied by `.claude/settings.json`.
 
 ## Ingestion rules
 
-- robots.txt respected for all sources.
-- 1 request per second, no parallelism within a domain.
-- Raw bytes cached in `data/raw/` keyed by URL hash (gitignored).
-- Content-hash idempotency: unchanged sources are skipped on re-ingest.
-- Mark two documents `acl_groups = ["engineer"]` for RBAC tests; the rest `["all"]`.
+- robots.txt respected for all sources. `deltacontrols.com/robots.txt` sets `Crawl-delay: 10`
+  (stricter than the original 1-req/s plan) and blocks the bare `curl`/`wget` user agents — the
+  crawler identifies itself as `bas-assistant/0.1 (+https://github.com/jkhaings/bas-assistant)`.
+- No parallelism within a domain; the 10s delay only applies to cache misses, so a re-run with a
+  warm `data/raw/` cache does no network I/O at all.
+- Raw bytes cached in `data/raw/` keyed by a hash of the URL (gitignored).
+- Content-hash idempotency: unchanged sources are skipped on re-ingest (raw bytes for a PDF,
+  extracted text for HTML — HTML carries per-request nonces that would defeat a raw-byte hash).
+- Two documents are `acl_groups = ["engineer"]` for RBAC tests — `UNOnext-MODBUS-RTU-Protocol.pdf`
+  and `DAC-633PoE-Catalog-Sheet.pdf` (see `src/bas_assistant/ingest/sources.py`); the rest `["all"]`.

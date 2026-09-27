@@ -1,9 +1,13 @@
-"""FastAPI application — session 0 exposes /healthz only."""
+"""FastAPI application: health check, retrieval, and document listing."""
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from bas_assistant.api import ask, documents
+
 app = FastAPI(title="bas-assistant", docs_url="/docs", redoc_url=None)
+app.include_router(ask.router)
+app.include_router(documents.router)
 
 
 class Health(BaseModel):

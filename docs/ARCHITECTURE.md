@@ -1,6 +1,6 @@
 # bas-assistant: design document
 
-Stack locked (Sep 26, final weekend scope): FastAPI + Pydantic v2 · Postgres 16 + pgvector + tsvector · Redis · Docling (PyMuPDF fallback) · LlamaIndex (ingestion) · OpenAI text-embedding-3-small · local bge-reranker · LiteLLM gateway · GPT-4o-mini → Gemini Flash (fast tier), Claude Sonnet → GPT-4o (strong tier) · LangGraph + Postgres checkpointer + `interrupt` human gate (internal ticket table, no Jira) · guardrails as code: Presidio in/out, injection rail, output validator · "View as" role switcher (no login), admin token for /approve · Langfuse (OTel) · RAGAS + pytest golden set + red-team pytest · Prometheus + Grafana (Budget; Quality & adoption; embedded in the app) · React + TypeScript (Vite) · Docker Compose on the DigitalOcean droplet, Caddy, Cloudflare DNS at bas.jasonkhaings.com · GitHub Actions (one job, PR only, no LLM calls).
+Stack locked (Sep 26, final weekend scope): FastAPI + Pydantic v2 · Postgres 16 + pgvector + tsvector · Redis · Docling (pypdfium2 fallback — already a Docling dependency, avoids adding AGPL PyMuPDF) · LlamaIndex (ingestion) · OpenAI text-embedding-3-small · local bge-reranker · LiteLLM gateway · GPT-4o-mini → Gemini Flash (fast tier), Claude Sonnet → GPT-4o (strong tier) · LangGraph + Postgres checkpointer + `interrupt` human gate (internal ticket table, no Jira) · guardrails as code: Presidio in/out, injection rail, output validator · "View as" role switcher (no login), admin token for /approve · Langfuse (OTel) · RAGAS + pytest golden set + red-team pytest · Prometheus + Grafana (Budget; Quality & adoption; embedded in the app) · React + TypeScript (Vite) · Docker Compose on the DigitalOcean droplet, Caddy, Cloudflare DNS at bas.jasonkhaings.com · GitHub Actions (one job, PR only, no LLM calls).
 
 Deferred until after the technical round: Slack, n8n, MCP server, Jira, Prefect (ingest is `make ingest`), Cohere, Ollama, promptfoo, LangSmith, k6, MkDocs, Azure/Terraform, Entra ID, Chroma, Guardrails AI library. Sections below that mention these describe the production path, not this weekend's build.
 
@@ -18,7 +18,7 @@ This file becomes `docs/ARCHITECTURE.md` in the repo. Keep it current-state trut
 | Session | Branch | Status |
 |---|---|---|
 | 0 — scaffold | `main` | ✅ shipped: `/healthz`, settings, logging, CI |
-| A — retrieval | `a-retrieval` | ⏳ not started |
+| A — retrieval | `a-retrieval` | ✅ shipped: ingest (crawl/parse/chunk/embed), hybrid retrieval, `POST /ask` (citations only, no answer), `GET /documents` |
 | B — graph | `b-graph` | ⏳ not started |
 | C — guardrails | `c-guardrails` | ⏳ not started |
 | D — observability | `d-observability` | ⏳ not started |
@@ -34,7 +34,7 @@ Users and roles (in the demo, chosen with a "View as" switcher; in production, f
 - **engineer**: everything support can, plus engineer-tier documents, can propose tickets.
 - **admin**: everything, approves tickets (requires the admin token in the demo), sees the dashboards.
 
-Corpus (all public): Delta Controls catalog-sheet PDFs, product pages on deltacontrols.com, the O3 help center on Zendesk. Roughly 30 to 60 documents, a few hundred pages, table-heavy.
+Corpus (all public): Delta Controls catalog-sheet PDFs, product pages on deltacontrols.com, the O3 help center on Zendesk (deferred — see session A's build notes). As ingested Sep 27 2026: 112 documents (70 catalog PDFs, 42 product pages), 1459 parents, 1502 chunks, table-heavy.
 
 The twenty questions: derived from the corpus in session 1 (`data/top20_questions.md`), each with the expected source document. They are the golden set for evals and the "twenty questions" from the cover letter.
 
@@ -49,60 +49,69 @@ Non-goals: no free chat about anything outside the corpus, no actions other than
 | documents | one row per source | id, title, source_url, source_type (pdf/page/article), product, doc_type, acl_groups text[], content_hash, parse_quality, ingested_at |
 | chunks | child chunks for retrieval | id, document_id, parent_id, page, position, text, tsv tsvector (GIN), embedding vector(1536) (HNSW), metadata jsonb |
 | parents | parent chunks for reading | id, document_id, page_start, page_end, text |
-| users | people and service accounts | id, email, role, api_key_hash (service accounts), created_at |
-| threads | conversations | id, user_id, created_at (LangGraph checkpointer tables live alongside) |
-| requests | one row per /ask | id, thread_id, user_id, role, question_redacted, route (fast/strong), decision (answered/abstained/refused/paused/failed), latency_ms, created_at |
+| users | people and service accounts | id, email, role, team, api_key_hash (service accounts), created_at |
+| threads | conversations | id, user_id, created_at (LangGraph checkpointer tables live alongside, from session B) |
+| requests | one row per /ask | id, thread_id, user_id, role, question_redacted, route (fast/strong), decision (retrieved/abstained today; answered/refused/paused/failed join from B/C), latency_ms, created_at |
 | request_chunks | what was retrieved | request_id, chunk_id, rank, score, used_in_answer bool |
-| usage | one row per model call | id, request_id, stage (router/embed/answer/judge), alias, model, provider, input_tokens, output_tokens, cached_tokens, usd, latency_ms, cache_hit bool |
+| usage | one row per model call | id, request_id (nullable — ingestion embeds have none), stage (router/embed/answer/judge), alias, model, provider, input_tokens, output_tokens, cached_tokens, usd, latency_ms, cache_hit bool, created_at |
 | feedback | the letter's first metric | request_id, user_id, value (used_as_is / used_with_edits / not_used), created_at |
 | flags | the letter's second metric | request_id, reviewer_id, reason, created_at |
-| tickets | proposed and filed tickets | id, request_id, draft jsonb, status (proposed/approved/rejected/filed), approver_id, jira_key |
-| audit | append-only log | request_id, actor, action, detail jsonb, created_at |
-| budgets | limits | scope (user/team/global), period, usd_limit, tokens_limit |
+| tickets | proposed and filed tickets | id, request_id, draft jsonb, status (proposed/approved/rejected/filed), approver_id, jira_key, created_at |
+| audit | append-only log | id, request_id, actor, action, detail jsonb, created_at |
+| budgets | limits | id, scope (user/team/global), period, usd_limit, tokens_limit |
+| eval_runs | golden-set and red-team results | id, kind (golden/redteam), corpus_version, prompt_version, scores jsonb, cost_usd, created_at |
 
-Cost rolls up from `usage`; adoption from `requests` and `feedback`; quality from `flags` plus eval results stored in `eval_runs`.
+Cost rolls up from `usage`; adoption from `requests` and `feedback`; quality from `flags` plus eval results stored in `eval_runs`. All tables exist as of session A (one migration each for corpus+users, then the rest of activity) so no later session alters a table another session depends on; sessions B–D are the first to *write* to most of the activity rows beyond users/threads/requests/request_chunks/usage.
 
 ---
 
-## 3. Ingestion pipeline (Prefect flow, nightly, and on demand)
+## 3. Ingestion pipeline (`make ingest`, manual — Prefect is the deferred production path)
 
-1. **Discover**: crawl deltacontrols.com/products (follow Load More), collect product-page URLs and every linked `.pdf`; list O3 help-center articles via the Zendesk Help Center API. Respect robots.txt, one request per second, cache raw bytes in `data/raw/` keyed by URL.
-2. **Hash and skip**: content hash per source; unchanged sources are skipped, changed ones re-processed, missing ones marked `retired` (their chunks leave the index).
-3. **Parse**: PDFs through Docling (tables preserved as markdown tables); fall back to PyMuPDF and mark `parse_quality` lower. HTML through selectolax, keeping headings. Articles from the API body.
-4. **Chunk**: LlamaIndex parent-child. Parent ≈ 1500 tokens by heading/section; child ≈ 300 tokens, overlap 50. A table row never splits across children. Each child records page and parent.
-5. **Embed**: batch children through LiteLLM alias `embed`. Cost logged to `usage` with stage `embed`.
-6. **Index**: upsert chunks; tsvector generated in SQL; HNSW index on embedding.
-7. **Report**: chunk counts by source type, parse-quality distribution, time and cost of the run. Written to the Prefect run log and `eval_runs`.
+Built in session A, `src/bas_assistant/ingest/`:
 
-Idempotent, resumable, and cheap: a nightly run with no changes costs $0.
+1. **Discover**: read `product-sitemap.xml` for every product page URL (robots.txt-endorsed; the "Load More" AJAX isn't reverse-engineered), plus a starter list of 12 known catalog PDFs tried directly by URL. Each product page's `.downloads-list a.download-link` is scanned for PDF links matching an allowlist (catalog/datasheet/protocol/spec), capped at 40 PDFs total. robots.txt sets `Crawl-delay: 10`, so the crawler waits 10s between real requests (stricter than the original 1 req/s plan) and caches raw bytes in `data/raw/` keyed by a hash of the URL — a re-run with a warm cache does no network I/O at all. The Zendesk O3 help center is not crawled (deferred; see below).
+2. **Hash and skip**: content hash per source (raw bytes for a PDF; extracted text for HTML, since HTML carries per-request nonces that would defeat a raw-byte hash) — unchanged sources are skipped, changed ones replaced in one transaction. There is no `retired` state yet: a source that disappears from discovery simply stops being re-ingested; its existing rows are not deleted.
+3. **Parse**: PDFs through Docling (`do_table_structure=True`, tables become markdown tables, one page at a time up to 20 pages); on any Docling failure or empty output, falls back to pypdfium2's plain-text extraction and records `parse_quality="fallback"`. HTML product pages through selectolax: headings, paragraphs, list items and tables in document order (selectolax's compound CSS selectors do **not** preserve document order — verified against real markup — so content is walked depth-first instead), nav/footer/script/style dropped.
+4. **Chunk**: LlamaIndex `MarkdownNodeParser` splits each page into heading sections (further split by `SentenceSplitter` if a section exceeds ~1500 tokens) as parents; `SentenceSplitter(chunk_size=300, chunk_overlap=50)` with a custom line-aware tokenizer splits each parent into children so a markdown table row is never split across children. Each child records page, parent, and (via the parent/document relationship) product, doc_type, acl_groups, and source_url.
+5. **Embed**: children are embedded in batches of 100 through a thin `EmbeddingProvider` (an OpenAI-compatible `/v1/embeddings` client) — not yet the LiteLLM alias `embed`, which is session B's job; the base URL and model are both settings, so B repoints them without touching this code. One `usage` row per batch, `stage="embed"`, `request_id` null.
+6. **Index**: SQLAlchemy upserts documents/parents/chunks in one transaction per source; `tsv` is a Postgres `GENERATED ALWAYS AS (to_tsvector(...))` column with a GIN index; `embedding` has an HNSW index (`vector_cosine_ops`).
+7. **Report**: `python -m bas_assistant.ingest` logs one structured line: documents ingested/updated/skipped/failed by source type, parents and chunks written, the parse_quality distribution, embed tokens and USD, and elapsed time.
+
+Idempotent and resumable (a re-run with no changes costs $0 in both crawl and embed time); not yet scheduled — `make ingest` is a manual step until a later session wants a cron/Prefect flow.
+
+**Deferred from this session:** Prefect scheduling (ingest is a manual `make ingest`), the Zendesk O3 help center, document retirement (removed sources' chunks are not pruned), and the LiteLLM `embed` alias (session B).
 
 ---
 
 ## 4. The request path
 
+**As of session A** — no graph, no guards, no cache, no answer generation yet; `POST /ask` is retrieval-only:
+
 ```
-Slack / Web / MCP
+Web (curl, for now)
       │
       ▼
- FastAPI /ask ── role header from the UI switcher (or API key for Slack/n8n/MCP) → acl_groups, tool allowlist; global daily USD cap checked first
+ FastAPI POST /ask ── X-Demo-Role header (default "support", 422 if unrecognised) → acl_groups
       │
       ▼
- Input guard: Presidio redaction → Guardrails AI input rails (off-topic, injection patterns) → rate limit + budget check (Redis)
+ retrieve(): embed the question → pgvector top-20 ∪ tsvector top-20 (both acl_groups &&-filtered)
+             → reciprocal rank fusion → top-30 → local cross-encoder rerank
+             → group by parent, best child per parent → top-5
+             → best score < rerank_threshold ? abstain : citations
       │
       ▼
- Cache check (Redis, key = normalized question + role + corpus_version) ──hit──▶ return, usd 0
-      │ miss
-      ▼
- LangGraph graph (section 5) — every node traced
+ Persist: one `threads` row (one per request — session B adds multi-turn reuse),
+          one `requests` row (decision = retrieved|abstained), `request_chunks` for
+          the top-30 reranked, one `usage` row for the query embed call
       │
       ▼
- Output guard: validator (citations ⊆ retrieved, no external URLs/images, schema) → PII scan
-      │
-      ▼
- Persist: requests, request_chunks, usage, audit → stream answer → feedback buttons
+ Response: {request_id, answer: null, citations[], retrieved[], abstained, timings}
 ```
 
-Target p95 under 4 seconds for a fast-tier answer, under 8 for strong. Streaming starts within 1 second.
+The full path in the design (role→tool-allowlist, budget cap, Presidio/injection input guard, Redis
+cache, the LangGraph answer/validate/ticket/gate loop, output guard, audit, streaming) is sessions
+B and C; this section will be rewritten again once those land. Retrieval-only p95 is well under a
+second locally (the reranker is the only non-trivial cost, and it runs on CPU).
 
 ---
 
@@ -139,6 +148,8 @@ decision, errors[], usage_so_far
 ## 6. Cost tracking
 
 **Where the numbers come from.** Every model call, including embeddings and the router, goes through LiteLLM. LiteLLM knows the price sheet per model and returns input, output and cached token counts and USD. The app writes one `usage` row per call with `request_id`, `stage`, `alias`, `model`, `provider`, `cache_hit`.
+
+**As of session A**, this is the target, not yet the reality: there is no LiteLLM proxy in the stack until session B builds it. Session A's `usage` rows (`stage="embed"`) come from a thin `EmbeddingProvider` calling the OpenAI embeddings endpoint directly over `httpx` (no vendor SDK, but no LiteLLM either) — `embed_base_url`/`embed_model` are settings specifically so B repoints them at the `embed` alias with no code change. USD is computed locally from `embed_usd_per_mtok`, not read back from LiteLLM's price sheet.
 
 **Attribution.** `requests` carries user and role; users carry a team tag. Cost per request = sum of its usage rows. Cost per user, per team, per day, per stage = one GROUP BY. The router's cost is visible separately, so you can prove routing pays for itself.
 

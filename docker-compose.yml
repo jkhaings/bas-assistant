@@ -1,17 +1,65 @@
-# Session 0: app placeholder only.
-# Sessions A-E add postgres, redis, litellm, langfuse, prometheus, grafana.
+# Session A: app, migrate (one-shot), postgres+pgvector, redis.
+# Sessions B-D add litellm, langfuse, prometheus, grafana.
 
 services:
   app:
     build: .
+    image: bas-assistant-app:local
     env_file: ${HOME}/.bas-assistant.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - model_cache:/app/.cache/huggingface
+      - ./data/raw:/app/data/raw
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 10s
+      start_period: 30s
     restart: unless-stopped
+
+  migrate:
+    build: .
+    image: bas-assistant-app:local
+    env_file: ${HOME}/.bas-assistant.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: bas_assistant
+      POSTGRES_DB: bas_assistant
+    env_file: ${HOME}/.bas-assistant.env
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bas_assistant -d bas_assistant"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  model_cache:
