@@ -13,11 +13,12 @@ from psycopg.rows import DictRow, dict_row
 from psycopg_pool import ConnectionPool
 from pydantic import SecretStr
 from redis import Redis
+from sqlalchemy import make_url
 
 from bas_assistant.agent.graph import CHECKPOINT_SERDE, Graph, build_graph
 from bas_assistant.agent.nodes import AgentContext
 from bas_assistant.agent.state import Retriever
-from bas_assistant.db import create_db_engine
+from bas_assistant.db.engine import get_engine
 from bas_assistant.settings import Settings
 
 
@@ -33,9 +34,13 @@ class AppRuntime:
 
 
 def checkpoint_pool(database_url: str) -> ConnectionPool[Connection[DictRow]]:
-    """Connection settings langgraph-checkpoint-postgres requires for a shared pool."""
+    """Connection settings langgraph-checkpoint-postgres requires for a shared pool.
+
+    database_url is the SQLAlchemy URL from Settings; psycopg wants it without the driver.
+    """
+    conninfo = make_url(database_url).set(drivername="postgresql")
     return ConnectionPool(
-        database_url,
+        conninfo.render_as_string(hide_password=False),
         connection_class=Connection[DictRow],
         kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
         open=True,
@@ -44,8 +49,7 @@ def checkpoint_pool(database_url: str) -> ConnectionPool[Connection[DictRow]]:
 
 @contextmanager
 def open_runtime(settings: Settings, retrieve: Retriever) -> Iterator[AppRuntime]:
-    database_url = settings.database_url.get_secret_value()
-    engine = create_db_engine(database_url)
+    engine = get_engine()
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     llm = httpx.Client(
         base_url=settings.litellm_base_url,
@@ -54,7 +58,7 @@ def open_runtime(settings: Settings, retrieve: Retriever) -> Iterator[AppRuntime
         # fallback, 30 s each (config/litellm.yaml).
         timeout=130,
     )
-    with checkpoint_pool(database_url) as pool, llm, redis:
+    with checkpoint_pool(settings.database_url) as pool, llm, redis:
         checkpointer = PostgresSaver(pool, serde=CHECKPOINT_SERDE)
         checkpointer.setup()
         yield AppRuntime(

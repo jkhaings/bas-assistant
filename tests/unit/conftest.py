@@ -15,9 +15,10 @@ from sqlalchemy.pool import StaticPool
 
 from bas_assistant.agent.graph import CHECKPOINT_SERDE, build_graph
 from bas_assistant.agent.nodes import AgentContext
-from bas_assistant.db import metadata, users
+from bas_assistant.db.activity import Audit, Request, RequestChunk, Thread, Ticket, Usage, User
+from bas_assistant.db.engine import Base
 from bas_assistant.runtime import AppRuntime
-from tests.fakes import ADMIN_TOKEN, FakeProxy, FakeRetriever, make_client
+from tests.graph_fakes import ADMIN_TOKEN, FakeProxy, FakeRetriever, make_client
 
 
 @pytest.fixture
@@ -25,10 +26,12 @@ def engine() -> Iterator[Engine]:
     engine = create_engine(
         "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
-    metadata.create_all(engine)
+    # Only the activity tables the graph writes: the corpus tables use Postgres-only types.
+    tables = [User, Thread, Request, RequestChunk, Usage, Ticket, Audit]
+    Base.metadata.create_all(engine, tables=[model.__table__ for model in tables])  # type: ignore[misc]
     with engine.begin() as conn:
         conn.execute(
-            insert(users),
+            insert(User),
             [
                 {"email": "support@demo.local", "role": "support"},
                 {"email": "engineer@demo.local", "role": "engineer"},

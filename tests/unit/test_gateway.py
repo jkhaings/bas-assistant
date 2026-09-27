@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from bas_assistant.agent.state import AnswerOut
-from bas_assistant.llm.gateway import GatewayError, complete, embed
+from bas_assistant.llm.gateway import GatewayError, complete
 
 pytestmark = pytest.mark.unit
 
@@ -73,18 +73,3 @@ def test_unreachable_proxy_raises_gateway_error() -> None:
 
     with pytest.raises(GatewayError):
         complete(_client(httpx.MockTransport(handler)), "fast", _MESSAGES, AnswerOut, 50)
-
-
-def test_embeddings_come_back_in_input_order() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        rows = [{"index": 1, "embedding": [2.0]}, {"index": 0, "embedding": [1.0]}]
-        return httpx.Response(
-            200,
-            json={"data": rows, "usage": {"prompt_tokens": 6}},
-            headers={"x-litellm-model-id": "openai/text-embedding-3-small"},
-        )
-
-    vectors, usage = embed(_client(httpx.MockTransport(handler)), ["a", "b"])
-
-    assert vectors == [[1.0], [2.0]]
-    assert (usage.alias, usage.model, usage.input_tokens) == ("embed", "text-embedding-3-small", 6)

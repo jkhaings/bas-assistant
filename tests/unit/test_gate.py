@@ -8,8 +8,8 @@ from redis import Redis
 from sqlalchemy import Engine, select
 
 from bas_assistant.agent.nodes import NO_TICKET_NOTE
-from bas_assistant.db import audit, requests
-from tests.fakes import ADMIN_TOKEN, FakeProxy, answer_json, ask
+from bas_assistant.db.activity import Audit, Request
+from tests.graph_fakes import ADMIN_TOKEN, FakeProxy, answer_json, ask
 
 pytestmark = pytest.mark.unit
 
@@ -77,9 +77,9 @@ def test_approval_with_the_token_resumes_the_graph_and_files_the_ticket(
     assert ticket["approver_id"] is not None
     with engine.connect() as conn:
         actions: list[str] = list(
-            conn.execute(select(audit.c.action).order_by(audit.c.created_at)).scalars()
+            conn.execute(select(Audit.action).order_by(Audit.created_at)).scalars()
         )
-        decision: str = conn.execute(select(requests.c.decision)).scalar_one()
+        decision: str | None = conn.execute(select(Request.decision)).scalar_one()
     assert actions == ["ticket_proposed", "ticket_approved", "ticket_filed"]
     assert decision == "answered"
 

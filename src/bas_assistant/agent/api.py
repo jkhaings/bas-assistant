@@ -29,8 +29,8 @@ from bas_assistant.agent.turn import (
     stream_graph,
     thread_config,
 )
+from bas_assistant.api.roles import Role, acl_groups_for_role, demo_role, tools_for_role
 from bas_assistant.llm.gateway import GatewayError
-from bas_assistant.roles import ACL_GROUPS, TOOLS_ALLOWED, Role
 from bas_assistant.runtime import AppRuntime, get_runtime
 
 router = APIRouter()
@@ -38,12 +38,12 @@ router = APIRouter()
 Runtime = Annotated[AppRuntime, Depends(get_runtime)]
 
 
-def current_user(x_demo_role: Annotated[Role, Header()], runtime: Runtime) -> UserContext:
+def current_user(role: Annotated[Role, Depends(demo_role)], runtime: Runtime) -> UserContext:
     return UserContext(
-        id=demo_user_id(runtime.agent.engine, x_demo_role),
-        role=x_demo_role,
-        acl_groups=ACL_GROUPS[x_demo_role],
-        tools_allowed=TOOLS_ALLOWED[x_demo_role],
+        id=demo_user_id(runtime.agent.engine, role.value),
+        role=role.value,
+        acl_groups=acl_groups_for_role(role),
+        tools_allowed=tools_for_role(role),
     )
 
 

@@ -8,9 +8,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from bas_assistant.llm.gateway import Usage
 from bas_assistant.llm.router import Route
-from bas_assistant.roles import Role
 
+# The values of api.roles.Role; a plain string keeps checkpoints free of enum classes.
+RoleName = Literal["support", "engineer", "admin"]
 Decision = Literal["answered", "abstained", "refused", "paused", "failed"]
 Approval = Literal["none", "pending", "approved", "rejected"]
 
@@ -29,9 +31,11 @@ class Retrieval:
     passages: list[Passage]
     retrieval_ms: int
     rerank_ms: int
+    # The query embedding's cost, recorded as a usage row like any model call.
+    embed: Usage | None = None
 
 
-# (question, acl_groups) -> passages the role may see. Session A's VectorStore plugs in here.
+# (question, acl_groups) -> passages the role may see; agent/corpus.py is the real one.
 Retriever = Callable[[str, list[str]], Retrieval]
 
 
@@ -63,7 +67,7 @@ class ApprovalVerdict(BaseModel):
 
 class UserContext(BaseModel):
     id: UUID
-    role: Role
+    role: RoleName
     acl_groups: list[str]
     tools_allowed: list[str]
 

@@ -7,7 +7,7 @@ from uuid import UUID
 from redis import Redis
 from sqlalchemy import Engine, func, select
 
-from bas_assistant.db import usage
+from bas_assistant.db.activity import Usage
 
 
 def next_reset(now: datetime) -> datetime:
@@ -19,7 +19,7 @@ def spent_today(engine: Engine, now: datetime) -> Decimal:
     midnight = datetime.combine(now.date(), time(), tzinfo=UTC)
     with engine.connect() as conn:
         total: Decimal = conn.execute(
-            select(func.coalesce(func.sum(usage.c.usd), 0)).where(usage.c.created_at >= midnight)
+            select(func.coalesce(func.sum(Usage.usd), 0)).where(Usage.created_at >= midnight)
         ).scalar_one()
     return Decimal(total)
 

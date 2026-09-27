@@ -17,6 +17,7 @@ from bas_assistant.agent.records import (
     close_request,
     create_thread,
     open_request,
+    record_request_chunks,
     thread_owner,
 )
 from bas_assistant.agent.state import AgentState, Decision, Turn, UserContext, turn_input
@@ -214,6 +215,8 @@ def close_turn(runtime: AppRuntime, turn: OpenTurn) -> AskResponse:
             state.route, decision, _elapsed_ms(turn), state.retrieval_ms, state.rerank_ms
         ),
     )
+    cited = state.draft.citations if state.draft else []
+    record_request_chunks(runtime.agent.engine, turn.request_id, state.retrieved, cited)
     # A rejected answer still cost model calls, so it keeps its place in the allowance.
     logger.info("request %s decision=%s route=%s", turn.request_id, decision, state.route)
     result = TurnResult(

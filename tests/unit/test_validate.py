@@ -7,8 +7,16 @@ from sqlalchemy import Engine, select
 from bas_assistant.agent.nodes import FAILED_MESSAGE, TICKET_WITHOUT_DOCS_MESSAGE
 from bas_assistant.agent.state import AnswerOut, TicketDraft
 from bas_assistant.agent.validate import find_violations
-from bas_assistant.db import audit, requests
-from tests.fakes import ADMIN_TOKEN, PASSAGES, SOURCE_URL, FakeProxy, answer_json, ask
+from bas_assistant.db.activity import Audit, Request
+from tests.graph_fakes import (
+    ADMIN_TOKEN,
+    CHUNK_1,
+    PASSAGES,
+    SOURCE_URL,
+    FakeProxy,
+    answer_json,
+    ask,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -17,7 +25,7 @@ def _draft(answer: str, citations: list[str] | None = None) -> AnswerOut:
     return AnswerOut(
         answerable=True,
         answer=answer,
-        citations=["c1"] if citations is None else citations,
+        citations=[CHUNK_1] if citations is None else citations,
         confidence="high",
         needs_ticket=False,
         ticket_draft=None,
@@ -40,7 +48,7 @@ def test_fabricated_citation_is_retried_then_fails_closed(
     assert "9 W" not in response.text
     assert len(proxy.answer_calls()) == 2
     with engine.connect() as conn:
-        actions: list[str] = list(conn.execute(select(audit.c.action)).scalars())
+        actions: list[str] = list(conn.execute(select(Audit.action)).scalars())
     assert actions == ["answer_rejected"]
 
 
@@ -159,7 +167,10 @@ def test_ticket_for_something_the_docs_do_not_cover_shows_a_fixed_message(
 ) -> None:
     proxy.answers = [
         answer_json(
-            answer="free text", citations=("c1",), ticket_title="Warranty claim", answerable=False
+            answer="free text",
+            citations=(CHUNK_1,),
+            ticket_title="Warranty claim",
+            answerable=False,
         )
     ]
 
@@ -174,7 +185,7 @@ def test_ticket_for_something_the_docs_do_not_cover_shows_a_fixed_message(
     assert body["answer"] == TICKET_WITHOUT_DOCS_MESSAGE
     assert body["citations"] == []
     with engine.connect() as conn:
-        assert conn.execute(select(requests.c.decision)).scalar_one() == "abstained"
+        assert conn.execute(select(Request.decision)).scalar_one() == "abstained"
 
 
 @pytest.mark.parametrize(

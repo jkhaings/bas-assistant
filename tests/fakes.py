@@ -1,146 +1,132 @@
-"""Test doubles shared by every tier: a LiteLLM proxy stand-in at the HTTP boundary, a
-fixed retriever, and an app client wired to a given runtime.
+"""Deterministic fakes for unit tests: no network, no docker, no model download.
 
-The app's gateway code runs for real against the fake proxy; only the network hop is
-replaced. Passages are synthetic and describe no real product.
+Substitutes for the three pluggable interfaces the retrieval pipeline takes:
+EmbeddingProvider, VectorStore, and Reranker.
 """
 
-import json
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from typing import Any
+from __future__ import annotations
 
-import httpx
-import httpx2
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+import hashlib
+import math
+import uuid
+from decimal import Decimal
 
-from bas_assistant.agent.state import Passage, Retrieval
-from bas_assistant.main import create_app
-from bas_assistant.runtime import AppRuntime
+from bas_assistant.db.corpus import Chunk, Document, Parent
+from bas_assistant.retrieval.embeddings import EmbedBatch
 
-ADMIN_TOKEN = "unit-test-admin-token"
-
-DEPLOYMENTS = {
-    "fast": "openai/gpt-4o-mini",
-    "strong": "anthropic/claude-sonnet-4-6",
-    "embed": "openai/text-embedding-3-small",
-}
-COST_USD = {"fast": "0.0001", "strong": "0.003", "embed": "0.00001"}
-INPUT_TOKENS = 100
-OUTPUT_TOKENS = 20
-
-SOURCE_URL = "https://docs.example.com/sample-controller.pdf"
-PASSAGES = [
-    Passage(
-        chunk_id="c1",
-        document_title="Sample Controller Catalog Sheet",
-        page=2,
-        source_url=SOURCE_URL,
-        text="The sample controller draws 4 W at 24 VAC.",
-        score=0.92,
-    ),
-    Passage(
-        chunk_id="c2",
-        document_title="Sample Controller Catalog Sheet",
-        page=3,
-        source_url=SOURCE_URL,
-        text="Replacement parts for the sample controller are ordered through support.",
-        score=0.81,
-    ),
-]
+EMBED_DIM = 1536
 
 
-def answer_json(
-    answer: str = "The sample controller draws 4 W at 24 VAC.",
-    citations: tuple[str, ...] = ("c1",),
-    ticket_title: str | None = None,
-    answerable: bool = True,
-) -> str:
-    draft = (
-        {"title": ticket_title, "body": "Customer needs a replacement."} if ticket_title else None
-    )
-    return json.dumps(
-        {
-            "answerable": answerable,
-            "answer": answer,
-            "citations": list(citations),
-            "confidence": "high",
-            "needs_ticket": draft is not None,
-            "ticket_draft": draft,
-        }
-    )
+def _hash_vector(text: str) -> list[float]:
+    """A deterministic, L2-normalised pseudo-embedding derived from a hash of the text."""
+    digest = hashlib.sha256(text.encode()).digest()
+    raw = [float(digest[i % len(digest)]) - 128.0 for i in range(EMBED_DIM)]
+    norm = math.sqrt(sum(v * v for v in raw)) or 1.0
+    return [v / norm for v in raw]
 
 
-@dataclass
-class FakeProxy:
-    complexity: str = "simple"
-    # Raw router output to send instead of a well-formed RouteDecision.
-    route_reply: str | None = None
-    answers: list[str] = field(default_factory=list)
-    down: set[str] = field(default_factory=set)
-    # Request bodies as the app sent them (decoded JSON).
-    calls: list[dict[str, Any]] = field(default_factory=list)
+class FakeEmbedder:
+    """A deterministic embedder: the same text always gives the same vector."""
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        alias = body["model"]
-        self.calls.append(body)
-        if alias in self.down:
-            return httpx.Response(503, json={"error": {"message": f"{alias} unavailable"}})
-        headers = {
-            "x-litellm-model-id": DEPLOYMENTS[alias],
-            "x-litellm-response-cost": COST_USD[alias],
-        }
-        usage = {"prompt_tokens": INPUT_TOKENS, "completion_tokens": OUTPUT_TOKENS}
-        if request.url.path == "/v1/embeddings":
-            data = [{"index": i, "embedding": [float(i)] * 3} for i in range(len(body["input"]))]
-            return httpx.Response(200, json={"data": data, "usage": usage}, headers=headers)
-        content = self._reply(body["response_format"]["json_schema"]["name"])
-        choice = {"message": {"role": "assistant", "content": content}}
-        return httpx.Response(200, json={"choices": [choice], "usage": usage}, headers=headers)
+    model = "fake-embedder"
 
-    def _reply(self, schema_name: str) -> str:
-        if schema_name == "RouteDecision":
-            topic_json = json.dumps({"complexity": self.complexity, "topic": "controller power"})
-            return self.route_reply if self.route_reply is not None else topic_json
-        return self.answers.pop(0) if self.answers else answer_json()
+    def embed(self, texts: list[str]) -> EmbedBatch:
+        return EmbedBatch(
+            vectors=[_hash_vector(text) for text in texts],
+            input_tokens=sum(len(text.split()) for text in texts),
+            usd=Decimal("0"),
+            latency_ms=0,
+        )
 
-    def answer_calls(self) -> list[dict[str, Any]]:
-        """Request bodies (decoded JSON) of the answer calls."""
+
+def fake_reranker(query: str, passages: list[str]) -> list[float]:
+    """Score by word overlap with the query — deterministic, no model download."""
+    query_words = set(query.lower().split())
+    return [len(query_words & set(p.lower().split())) / (len(query_words) or 1) for p in passages]
+
+
+def _visible(chunk: Chunk, acl_groups: list[str]) -> bool:
+    return bool(set(chunk.document.acl_groups) & set(acl_groups))
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
+
+
+class FakeVectorStore:
+    """An in-memory VectorStore: cosine similarity and substring match, no SQL."""
+
+    def __init__(self, chunks: list[Chunk]) -> None:
+        self._chunks = {chunk.id: chunk for chunk in chunks}
+
+    def vector_candidates(
+        self, embedding: list[float], acl_groups: list[str]
+    ) -> dict[uuid.UUID, int]:
+        visible = [c for c in self._chunks.values() if _visible(c, acl_groups)]
+        scored = sorted(visible, key=lambda c: _cosine(embedding, c.embedding), reverse=True)
+        return {chunk.id: rank for rank, chunk in enumerate(scored[:20], start=1)}
+
+    def lexical_candidates(self, query: str, acl_groups: list[str]) -> dict[uuid.UUID, int]:
+        terms = query.lower().split()
+        visible = [c for c in self._chunks.values() if _visible(c, acl_groups)]
+        matching = [c for c in visible if any(t in c.text.lower() for t in terms)]
+        scored = sorted(
+            matching, key=lambda c: sum(c.text.lower().count(t) for t in terms), reverse=True
+        )
+        return {chunk.id: rank for rank, chunk in enumerate(scored[:20], start=1)}
+
+    def chunks(self, chunk_ids: list[uuid.UUID], acl_groups: list[str]) -> list[Chunk]:
         return [
-            call
-            for call in self.calls
-            if call["response_format"]["json_schema"]["name"] == "AnswerOut"
+            self._chunks[chunk_id]
+            for chunk_id in chunk_ids
+            if chunk_id in self._chunks and _visible(self._chunks[chunk_id], acl_groups)
         ]
 
-
-@dataclass
-class FakeRetriever:
-    passages: list[Passage] = field(default_factory=lambda: list(PASSAGES))
-    seen_acl_groups: list[list[str]] = field(default_factory=list)
-
-    def __call__(self, _question: str, acl_groups: list[str]) -> Retrieval:
-        self.seen_acl_groups.append(acl_groups)
-        return Retrieval(passages=self.passages, retrieval_ms=12, rerank_ms=34)
+    def parents(self, parent_ids: list[uuid.UUID], acl_groups: list[str]) -> list[Parent]:
+        seen: dict[uuid.UUID, Parent] = {}
+        for chunk in self._chunks.values():
+            visible_parent = chunk.parent_id in parent_ids and _visible(chunk, acl_groups)
+            if visible_parent and chunk.parent_id not in seen:
+                seen[chunk.parent_id] = chunk.parent
+        return list(seen.values())
 
 
-@asynccontextmanager
-async def _no_startup(_app: FastAPI) -> AsyncGenerator[None]:
-    yield
+def make_document(*, acl_groups: list[str] | None = None, title: str = "Test Doc") -> Document:
+    """A minimal, unpersisted Document for building small test corpora."""
+    return Document(
+        id=uuid.uuid4(),
+        title=title,
+        source_url=f"https://example.com/{title}",
+        source_type="pdf",
+        product="Test Product",
+        doc_type="catalog",
+        acl_groups=acl_groups or ["all"],
+        content_hash="hash",
+        parse_quality="docling",
+    )
 
 
-def make_client(runtime: AppRuntime) -> TestClient:
-    app = create_app(_no_startup)
-    app.state.runtime = runtime
-    return TestClient(app)
+def make_parent(document: Document, *, text: str = "parent text") -> Parent:
+    """A minimal, unpersisted Parent linked back to its document."""
+    parent = Parent(id=uuid.uuid4(), document_id=document.id, page_start=1, page_end=1, text=text)
+    parent.document = document
+    return parent
 
 
-def ask(
-    client: TestClient, question: str, role: str = "support", thread_id: str | None = None
-) -> httpx2.Response:
-    body: dict[str, str] = {"question": question}
-    if thread_id:
-        body["thread_id"] = thread_id
-    return client.post("/ask", json=body, headers={"X-Demo-Role": role})
+def make_chunk(parent: Parent, *, text: str = "chunk text", page: int = 1) -> Chunk:
+    """A minimal, unpersisted Chunk linked back to its parent and document."""
+    chunk = Chunk(
+        id=uuid.uuid4(),
+        document_id=parent.document_id,
+        parent_id=parent.id,
+        page=page,
+        position=0,
+        text=text,
+        embedding=_hash_vector(text),
+    )
+    chunk.document = parent.document
+    chunk.parent = parent
+    return chunk

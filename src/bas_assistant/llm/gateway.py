@@ -102,9 +102,3 @@ def complete(
     response, latency_ms = _post(client, "/v1/chat/completions", body)
     content = response.json()["choices"][0]["message"]["content"] or ""
     return Completion(content=content, usage=_usage(alias, response, latency_ms))
-
-
-def embed(client: httpx.Client, texts: list[str]) -> tuple[list[list[float]], Usage]:
-    response, latency_ms = _post(client, "/v1/embeddings", {"model": "embed", "input": texts})
-    rows = sorted(response.json()["data"], key=lambda row: row["index"])
-    return [row["embedding"] for row in rows], _usage("embed", response, latency_ms)

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from bas_assistant.agent.prompts import build_messages
 from bas_assistant.agent.state import AgentState, Turn, UserContext
-from tests.fakes import FakeProxy, answer_json, ask
+from tests.graph_fakes import FakeProxy, answer_json, ask
 
 pytestmark = pytest.mark.unit
 
@@ -64,9 +64,9 @@ def test_another_roles_thread_cannot_be_continued_or_read(client: TestClient) ->
     assert (follow_up.status_code, history.status_code) == (404, 404)
 
 
-def test_thread_history_needs_a_role(client: TestClient) -> None:
-    thread_id = ask(client, "Power draw?").json()["thread_id"]
-    assert client.get(f"/threads/{thread_id}/history").status_code == 422
+def test_thread_history_without_a_role_is_read_as_support(client: TestClient) -> None:
+    thread_id = ask(client, "Engineer-only wiring detail?", role="engineer").json()["thread_id"]
+    assert client.get(f"/threads/{thread_id}/history").status_code == 404
 
 
 def test_prompt_keeps_only_the_last_six_turns() -> None:

@@ -1,45 +1,84 @@
-# Local stack: app, Postgres (pgvector), Redis, LiteLLM proxy.
-# Sessions D and E add Langfuse, Prometheus and Grafana.
-# Local development only. Ports bind to 127.0.0.1, and Postgres uses trust auth, so no
-# password is written anywhere (one committed to a public repo would protect nothing).
-# Never run this file on the droplet: session E's production compose sets POSTGRES_PASSWORD
-# and DATABASE_URL from /etc/bas-assistant.env.
+# Sessions A+B: app, migrate (one-shot), postgres+pgvector, redis, litellm.
+# Sessions C-D add langfuse, prometheus, grafana.
 
 services:
+  app:
+    build: .
+    image: bas-assistant-app:local
+    env_file: ${HOME}/.bas-assistant.env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - model_cache:/app/.cache/huggingface
+      - ./data/raw:/app/data/raw
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    image: bas-assistant-app:local
+    env_file: ${HOME}/.bas-assistant.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: bas
-      POSTGRES_DB: bas
-      POSTGRES_HOST_AUTH_METHOD: trust
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./deploy/postgres:/docker-entrypoint-initdb.d:ro
+      POSTGRES_USER: bas_assistant
+      POSTGRES_DB: bas_assistant
+    env_file: ${HOME}/.bas-assistant.env
     ports:
       - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U bas -d bas"]
+      test: ["CMD-SHELL", "pg_isready -U bas_assistant -d bas_assistant"]
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
+    # Published on localhost for make test-int and make eval.
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 5
+    restart: unless-stopped
 
   litellm:
     # main-stable, pinned by digest (LiteLLM 1.102.1).
     image: ghcr.io/berriai/litellm-database:main-stable@sha256:c38fe5eff11874941a21f5630ceb842f640dee7d5d5cde440b60ed0a71798f33
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    # The env file holds the Postgres password as POSTGRES_PASSWORD and compose cannot
+    # interpolate from env_file, so the proxy's DATABASE_URL is assembled in the container.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        export DATABASE_URL="postgresql://bas_assistant:$${POSTGRES_PASSWORD}@postgres:5432/litellm"
+        && exec docker/prod_entrypoint.sh --config /app/config.yaml --port 4000
     env_file: ${HOME}/.bas-assistant.env
-    environment:
-      DATABASE_URL: postgresql://bas@postgres:5432/litellm
     volumes:
       - ./config/litellm.yaml:/app/config.yaml:ro
     ports:
@@ -56,29 +95,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  app:
-    build: .
-    command: ["sh", "-c", "alembic upgrade head && exec python -m bas_assistant"]
-    env_file: ${HOME}/.bas-assistant.env
-    environment:
-      DATABASE_URL: postgresql://bas@postgres:5432/bas
-    ports:
-      - "127.0.0.1:8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      litellm:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c",
-             "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-
 volumes:
   pgdata:
+  model_cache:

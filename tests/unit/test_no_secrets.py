@@ -94,8 +94,8 @@ def test_settings_repr_and_dumps_mask_secret_values(monkeypatch: pytest.MonkeyPa
         "LANGFUSE_PUBLIC_KEY": "pk-lf-fake-test",
         "LANGFUSE_SECRET_KEY": "sk-lf-fake-test",
         "GRAFANA_ADMIN_PASSWORD": "grafana-fake-password",
+        "POSTGRES_PASSWORD": "postgres-fake-password",
         "LITELLM_API_KEY": "litellm-virtual-key-fake",
-        "DATABASE_URL": "postgresql://u:p@db:5432/d",
     }
     for k, v in env_map.items():
         monkeypatch.setenv(k, v)
@@ -117,8 +117,8 @@ def test_settings_starts_without_langfuse_keys(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("GEMINI_API_KEY", fakes["FAKE_GEMINI"])
     monkeypatch.setenv("ADMIN_TOKEN", "at-no-langfuse")
     monkeypatch.setenv("GRAFANA_ADMIN_PASSWORD", "gp-no-langfuse")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "pg-no-langfuse")
     monkeypatch.setenv("LITELLM_API_KEY", "lk-no-langfuse")
-    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db:5432/d")
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
 
@@ -139,8 +139,8 @@ def test_settings_reads_secrets_from_environment(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-readtest")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-readtest")
     monkeypatch.setenv("GRAFANA_ADMIN_PASSWORD", "gp-readtest")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "pg-readtest")
     monkeypatch.setenv("LITELLM_API_KEY", "lk-readtest")
-    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db:5432/d")
 
     from bas_assistant.settings import Settings  # noqa: PLC0415
 

@@ -1,5 +1,6 @@
 """One `usage` row per model call, and the per-request receipt built from those rows."""
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -7,16 +8,20 @@ from uuid import UUID
 from pydantic import BaseModel
 from sqlalchemy import Engine, insert, select
 
-from bas_assistant.db import requests, usage
+from bas_assistant.db.activity import Request
+from bas_assistant.db.activity import Usage as UsageRow
 from bas_assistant.llm.gateway import Usage
 
 Stage = Literal["router", "embed", "answer", "judge"]
+
+# created_at is set here rather than by the server default so calls within one second keep
+# their order in the receipt on every database.
 
 
 def record_usage(engine: Engine, request_id: UUID | None, stage: Stage, call: Usage) -> None:
     with engine.begin() as conn:
         conn.execute(
-            insert(usage).values(
+            insert(UsageRow).values(
                 request_id=request_id,
                 stage=stage,
                 alias=call.alias,
@@ -28,6 +33,7 @@ def record_usage(engine: Engine, request_id: UUID | None, stage: Stage, call: Us
                 usd=call.usd,
                 latency_ms=call.latency_ms,
                 cache_hit=False,
+                created_at=datetime.now(UTC),
             )
         )
 
@@ -36,7 +42,7 @@ def record_cache_hit(engine: Engine, request_id: UUID, alias: str) -> None:
     """The cache, not a model, served this request: $0 and no tokens."""
     with engine.begin() as conn:
         conn.execute(
-            insert(usage).values(
+            insert(UsageRow).values(
                 request_id=request_id,
                 stage="answer",
                 alias=alias,
@@ -48,6 +54,7 @@ def record_cache_hit(engine: Engine, request_id: UUID, alias: str) -> None:
                 usd=Decimal(0),
                 latency_ms=0,
                 cache_hit=True,
+                created_at=datetime.now(UTC),
             )
         )
 
@@ -83,9 +90,26 @@ class Receipt(BaseModel):
 
 def receipt(engine: Engine, request_id: UUID) -> Receipt | None:
     with engine.connect() as conn:
-        request = conn.execute(select(requests).where(requests.c.id == request_id)).first()
+        request = conn.execute(
+            select(
+                Request.route, Request.retrieval_ms, Request.rerank_ms, Request.latency_ms
+            ).where(Request.id == request_id)
+        ).first()
         rows = conn.execute(
-            select(usage).where(usage.c.request_id == request_id).order_by(usage.c.created_at)
+            select(
+                UsageRow.stage,
+                UsageRow.alias,
+                UsageRow.model,
+                UsageRow.provider,
+                UsageRow.input_tokens,
+                UsageRow.output_tokens,
+                UsageRow.cached_tokens,
+                UsageRow.usd,
+                UsageRow.latency_ms,
+                UsageRow.cache_hit,
+            )
+            .where(UsageRow.request_id == request_id)
+            .order_by(UsageRow.created_at)
         ).all()
     if request is None:
         return None

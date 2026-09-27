@@ -8,9 +8,17 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, insert
 
-from bas_assistant.db import usage
+from bas_assistant.db.activity import Usage
 from bas_assistant.runtime import AppRuntime
-from tests.fakes import SOURCE_URL, FakeProxy, FakeRetriever, answer_json, ask, make_client
+from tests.graph_fakes import (
+    CHUNK_1,
+    SOURCE_URL,
+    FakeProxy,
+    FakeRetriever,
+    answer_json,
+    ask,
+    make_client,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -22,7 +30,7 @@ def test_answer_cites_the_retrieved_passage(client: TestClient) -> None:
     assert body["answer"] == "The sample controller draws 4 W at 24 VAC."
     assert body["citations"] == [
         {
-            "chunk_id": "c1",
+            "chunk_id": CHUNK_1,
             "document_title": "Sample Controller Catalog Sheet",
             "page": 2,
             "source_url": SOURCE_URL,
@@ -67,8 +75,16 @@ def test_retrieval_uses_the_role_acl_groups(client: TestClient, retriever: FakeR
     assert retriever.seen_acl_groups == [["all"], ["all", "engineer"]]
 
 
-def test_missing_role_header_is_rejected(client: TestClient) -> None:
-    assert client.post("/ask", json={"question": "hi"}).status_code == 422
+def test_missing_role_header_is_read_as_support(
+    client: TestClient, retriever: FakeRetriever
+) -> None:
+    assert client.post("/ask", json={"question": "hi"}).status_code == 200
+    assert retriever.seen_acl_groups == [["all"]]
+
+
+def test_unknown_role_is_rejected(client: TestClient) -> None:
+    response = client.post("/ask", json={"question": "hi"}, headers={"X-Demo-Role": "root"})
+    assert response.status_code == 422
 
 
 def test_daily_cap_reached_returns_503_with_reset_time(
@@ -76,7 +92,7 @@ def test_daily_cap_reached_returns_503_with_reset_time(
 ) -> None:
     with engine.begin() as conn:
         conn.execute(
-            insert(usage).values(
+            insert(Usage).values(
                 stage="answer",
                 alias="strong",
                 model="m",

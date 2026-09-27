@@ -6,19 +6,19 @@ PYTHON  := uv run python
 PYTEST  := uv run pytest
 RUFF    := uv run ruff
 MYPY    := uv run mypy
+ALEMBIC := uv run alembic
 
 # ── required env variable names (values never printed) ──────────────────────
 # Proxy admin key and the two virtual keys; `make litellm-secrets` generates them
 LITELLM_VARS := LITELLM_MASTER_KEY LITELLM_API_KEY LITELLM_SERVICE_KEY
 REQUIRED_VARS := OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY ADMIN_TOKEN \
-                 GRAFANA_ADMIN_PASSWORD $(LITELLM_VARS)
+                 GRAFANA_ADMIN_PASSWORD POSTGRES_PASSWORD $(LITELLM_VARS)
 # Optional until session D mints them from the self-hosted Langfuse instance
 OPTIONAL_LANGFUSE_VARS := LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
 
-# Host-side URLs for the compose services (inside compose the service names are used)
-HOST_URLS := DATABASE_URL=postgresql://bas@localhost:5433/bas \
-             REDIS_URL=redis://localhost:6379/0 LITELLM_BASE_URL=http://localhost:4000
+# Host-side runs: load the env file, then reach the compose services on their published ports
 WITH_ENV  := set -a && . "$$HOME/.bas-assistant.env" && set +a &&
+HOST_URLS := POSTGRES_HOST=localhost POSTGRES_PORT=5433 LITELLM_BASE_URL=http://localhost:4000
 
 help:
 	@echo "Targets: up down test test-int lint format check-env preflight ingest eval redteam"
@@ -74,14 +74,13 @@ down:
 test:
 	$(PYTEST) -m unit
 
-# Separate database and Redis db, so fake-proxy rows never reach the app's spend totals
-TEST_URLS := DATABASE_URL=postgresql://bas@localhost:5433/bas_test \
-             REDIS_URL=redis://localhost:6379/1
-
-test-int:
-	$(TEST_URLS) uv run alembic upgrade head
-	$(TEST_URLS) uv run alembic check
-	$(TEST_URLS) $(PYTEST) -m integration
+# bas_test and Redis db 1, so test rows never reach the app's spend totals or cache
+test-int: check-env
+	@ENV_FILE="$$HOME/.bas-assistant.env"; \
+	set -a; . "$$ENV_FILE"; set +a; \
+	export POSTGRES_HOST=localhost POSTGRES_PORT=5433 POSTGRES_DB=bas_test \
+	       REDIS_URL=redis://localhost:6379/1; \
+	$(ALEMBIC) upgrade head && $(ALEMBIC) check && $(PYTEST) -m integration
 
 # ── quality ──────────────────────────────────────────────────────────────────
 lint:
@@ -102,11 +101,11 @@ preflight: lint test
 
 # ── data ─────────────────────────────────────────────────────────────────────
 ingest:
-	@echo "not implemented until session A" >&2; exit 1
+	docker compose exec app python -m bas_assistant.ingest
 
 # Live models through the local proxy. Session C adds the golden set and RAGAS.
 eval:
-	@$(WITH_ENV) $(HOST_URLS) $(PYTEST) -m eval
+	@$(WITH_ENV) $(HOST_URLS) REDIS_URL=redis://localhost:6379/0 $(PYTEST) -m eval
 
 redteam:
 	@echo "not implemented until session C" >&2; exit 1

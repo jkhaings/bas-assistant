@@ -1,14 +1,17 @@
-"""FastAPI application: /healthz, the agent routes and the cost receipt."""
+"""FastAPI application: /healthz, the agent routes, the cost receipt, search and documents."""
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from functools import partial
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from bas_assistant.agent import api as agent_api
-from bas_assistant.agent.state import Retrieval
+from bas_assistant.agent.corpus import search_corpus
+from bas_assistant.api import ask, documents
 from bas_assistant.cost import api as cost_api
+from bas_assistant.retrieval.embeddings import OpenAIEmbedder
 from bas_assistant.runtime import open_runtime
 from bas_assistant.settings import Settings
 
@@ -31,18 +34,16 @@ def create_app(lifespan: Lifespan) -> FastAPI:
     app.add_api_route("/healthz", healthz, methods=["GET"], response_model=Health)
     app.include_router(agent_api.router)
     app.include_router(cost_api.router)
+    app.include_router(ask.router)
+    app.include_router(documents.router)
     return app
-
-
-# TODO(session A merge): replace with the VectorStore search adapted to return Retrieval.
-def no_corpus_yet(_question: str, _acl_groups: list[str]) -> Retrieval:
-    """Session A's VectorStore replaces this at merge; until then every question abstains."""
-    return Retrieval(passages=[], retrieval_ms=0, rerank_ms=0)
 
 
 @asynccontextmanager
 async def _serve(app: FastAPI) -> AsyncGenerator[None]:
-    with open_runtime(Settings(), no_corpus_yet) as runtime:
+    settings = Settings()
+    retrieve = partial(search_corpus, OpenAIEmbedder(settings), settings)
+    with open_runtime(settings, retrieve) as runtime:
         app.state.runtime = runtime
         yield
 

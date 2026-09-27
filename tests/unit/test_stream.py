@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from bas_assistant.runtime import AppRuntime
-from tests.fakes import FakeProxy, ask, make_client
+from tests.graph_fakes import FakeProxy, ask, make_client
 
 pytestmark = pytest.mark.unit
 

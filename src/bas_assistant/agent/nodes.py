@@ -53,6 +53,8 @@ def route(state: AgentState, runtime: Runtime[AgentContext]) -> Update:
 
 def retrieve(state: AgentState, runtime: Runtime[AgentContext]) -> Update:
     result = runtime.context.retrieve(state.question, state.user.acl_groups)
+    if result.embed is not None:
+        record_usage(runtime.context.engine, state.request_id, "embed", result.embed)
     return {
         "retrieved": result.passages,
         "retrieval_ms": result.retrieval_ms,
