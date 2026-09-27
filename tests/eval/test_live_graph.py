@@ -5,7 +5,6 @@ then `make eval`; never in CI). Questions come from data/top20_questions.md.
 import json
 import logging
 import os
-from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -20,16 +19,9 @@ pytestmark = pytest.mark.eval
 
 logger = logging.getLogger(__name__)
 
-APP_URL = "http://localhost:8000"
 # The spot check in data/top20_questions.md; its top passage holds the answer.
 CACHED_QUESTION = "What is the power draw of the O3 Sense?"
 ENGINEER_ONLY_QUESTION = "What makes the DAC-633PoE suitable for fan coil applications?"  # row 19
-
-
-@pytest.fixture
-def app() -> Iterator[httpx.Client]:
-    with httpx.Client(base_url=APP_URL, timeout=180) as client:
-        yield client
 
 
 def _forget(question: str, role: str) -> None:
