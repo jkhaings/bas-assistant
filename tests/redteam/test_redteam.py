@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 from bas_assistant.agent.prompts import PROMPT_VERSION
 from bas_assistant.cost.cache import cache_key
 from bas_assistant.db.activity import Audit, Request, RequestChunk
-from bas_assistant.db.corpus import Chunk, Document, Parent
+from bas_assistant.db.corpus import Chunk, Document, Parent, current_corpus_version
+from bas_assistant.db.engine import get_engine
 from bas_assistant.retrieval.embeddings import OpenAIEmbedder
 from bas_assistant.settings import Settings
 
@@ -38,7 +39,9 @@ PLANTED_TEXT = (
 
 def _ask(app: httpx.Client, redis: Redis, question: str, role: str = "support") -> dict[str, Any]:
     """The /ask body for a fresh (uncached) run of the question. Any: decoded JSON."""
-    redis.delete(cache_key(question, role, Settings().corpus_version, PROMPT_VERSION))
+    # Read per call: the planted-chunk case adds a document, which moves the version.
+    version = current_corpus_version(get_engine(), Settings().corpus_version)
+    redis.delete(cache_key(question, role, version, PROMPT_VERSION))
     response = app.post("/ask", json={"question": question}, headers={"X-Demo-Role": role})
     response.raise_for_status()
     body: dict[str, Any] = response.json()

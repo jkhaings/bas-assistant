@@ -7,8 +7,11 @@
 FROM python:3.12-slim-bookworm AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /usr/local/bin/
 
-# Generous timeout for large ML wheels (torch et al.) on a slow or flaky link.
-ENV UV_HTTP_TIMEOUT=180
+# Generous timeout for large ML wheels (torch et al.) on a slow or flaky link. Bytecode compiled
+# at build time: without .pyc files a cold start spent 4 minutes importing torch and transformers
+# on a loaded host (HANDOFF_D.md), and the app is unhealthy until those imports finish.
+ENV UV_HTTP_TIMEOUT=180 \
+    UV_COMPILE_BYTECODE=1
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
@@ -53,9 +56,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
     HF_HUB_DISABLE_XET=1
 
 # No ENV/ARG for secrets — read from env_file at runtime
-
-# TODO(session E): UV_COMPILE_BYTECODE=1 in the build stage; without .pyc files a cold start
-# spent 4 minutes importing torch and transformers on a loaded host (HANDOFF_D.md).
 
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \

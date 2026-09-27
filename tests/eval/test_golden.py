@@ -13,6 +13,8 @@ from redis import Redis
 from bas_assistant.agent.prompts import PROMPT_VERSION
 from bas_assistant.agent.turn import AskResponse
 from bas_assistant.cost.cache import cache_key
+from bas_assistant.db.corpus import current_corpus_version
+from bas_assistant.db.engine import get_engine
 from bas_assistant.evals.golden import (
     GoldenCase,
     GoldenResult,
@@ -30,9 +32,11 @@ CASES = load_cases(EVAL_DIR / "golden.jsonl")
 RUNS = [(case, role) for case in CASES for role in case.expect]
 
 
-def _run_case(app: httpx.Client, redis: Redis, case: GoldenCase, role: str) -> GoldenResult:
+def _run_case(
+    app: httpx.Client, redis: Redis, version: str, case: GoldenCase, role: str
+) -> GoldenResult:
     # A cached answer would grade an earlier run, not the current prompts and corpus.
-    redis.delete(cache_key(case.question, role, Settings().corpus_version, PROMPT_VERSION))
+    redis.delete(cache_key(case.question, role, version, PROMPT_VERSION))
     try:
         response = app.post("/ask", json={"question": case.question}, headers={"X-Demo-Role": role})
         response.raise_for_status()
@@ -53,8 +57,11 @@ def results(app: httpx.Client) -> dict[tuple[int, str], GoldenResult]:
     documents.raise_for_status()
     if not documents.json():
         pytest.exit("The app's corpus is empty: run `make ingest`, then `make eval`.", returncode=1)
+    version = current_corpus_version(get_engine(), Settings().corpus_version)
     with Redis.from_url(os.environ["REDIS_URL"]) as redis:
-        graded = {(case.id, role): _run_case(app, redis, case, role) for case, role in RUNS}
+        graded = {
+            (case.id, role): _run_case(app, redis, version, case, role) for case, role in RUNS
+        }
     RESULTS.parent.mkdir(exist_ok=True)
     RESULTS.write_text("".join(result.model_dump_json() + "\n" for result in graded.values()))
     return graded

@@ -92,7 +92,7 @@ def runtime(engine: Engine, redis: Redis, proxy: FakeProxy, retriever: FakeRetri
         admin_token=SecretStr(ADMIN_TOKEN),
         daily_usd_cap=Decimal(3),
         user_daily_questions=50,
-        corpus_version="test",
+        corpus_version=lambda: "test",
         ip_rate_limit=20,
     )
 

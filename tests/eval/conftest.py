@@ -1,6 +1,7 @@
 """One client to the running stack for the whole eval run, paced to the app's per-IP limit:
 every module's requests come from the same address, so they share one budget."""
 
+import os
 from collections.abc import Iterator
 
 import httpx
@@ -10,7 +11,8 @@ from bas_assistant.evals.pacing import pacing_hook
 from bas_assistant.guardrails.limits import RATE_WINDOW
 from bas_assistant.settings import Settings
 
-APP_URL = "http://localhost:8000"
+# Set to the public URL to run the golden set against the droplet through Caddy.
+APP_URL = os.environ.get("APP_URL", "http://localhost:8000")
 # Above the app's worst case: the router and the answer call can each take 130 s through the
 # proxy's fallbacks, plus the CPU reranker.
 TIMEOUT_S = 330

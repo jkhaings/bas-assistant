@@ -36,3 +36,29 @@ def test_a_section_that_never_names_its_product_scores_higher_under_the_asked_pr
 
     scores = {citation.document_title: citation.score for citation in result.citations}
     assert scores["Red5-PLUS-1146"] > scores["Red5-FIELD-V100"]
+
+
+def test_one_document_fills_at_most_two_of_the_five_places() -> None:
+    crowded = make_document(title="Red5-PLUS-1146")
+    other = make_document(title="Red5-FIELD-V100")
+    chunks = [
+        make_chunk(make_parent(crowded, text=text), text=text)
+        for text in (
+            "bacnet device profile one",
+            "bacnet device profile two",
+            "bacnet device profile",
+        )
+    ]
+    chunks.append(make_chunk(make_parent(other, text="bacnet profile"), text="bacnet profile"))
+    deps = RetrievalDeps(
+        embedder=FakeEmbedder(),
+        store=FakeVectorStore(chunks),
+        reranker=fake_reranker,
+        rerank_threshold=0.1,
+    )
+
+    result = retrieve("bacnet device profile", ["all"], deps)
+
+    titles = [citation.document_title for citation in result.citations]
+    assert titles.count("Red5-PLUS-1146") == 2
+    assert "Red5-FIELD-V100" in titles

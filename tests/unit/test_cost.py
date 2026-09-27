@@ -1,6 +1,8 @@
 """Behaviour: receipts add up the proxy's per-call costs; repeat questions cost nothing."""
 
 import uuid
+from dataclasses import replace
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -10,15 +12,18 @@ from sqlalchemy import Engine, select
 from bas_assistant.cost.budget import sync_daily_cap
 from bas_assistant.db.activity import Budget, RequestChunk
 from bas_assistant.llm.gateway import Usage
+from bas_assistant.runtime import AppRuntime
 from tests.graph_fakes import (
     CHUNK_1,
     CHUNK_2,
     COST_USD,
     INPUT_TOKENS,
     OUTPUT_TOKENS,
+    PASSAGES,
     FakeProxy,
     FakeRetriever,
     ask,
+    make_client,
 )
 
 pytestmark = pytest.mark.unit
@@ -145,3 +150,32 @@ def test_daily_cap_row_mirrors_the_enforced_cap(engine: Engine) -> None:
             select(Budget.usd_limit).where(Budget.scope == "global", Budget.period == "daily")
         ).all()
     assert [row.usd_limit for row in rows] == [Decimal("0.01")]
+
+
+def test_an_abstain_cached_before_an_ingest_is_not_served_after_it(
+    runtime: AppRuntime, retriever: FakeRetriever
+) -> None:
+    corpus = ["empty"]
+    client = make_client(replace(runtime, corpus_version=lambda: corpus[0]))
+    retriever.passages = []
+    ask(client, "How much power does it draw?")
+    cached = ask(client, "How much power does it draw?").json()
+
+    corpus[0] = "ingested"
+    retriever.passages = list(PASSAGES)
+    after_ingest = ask(client, "How much power does it draw?").json()
+
+    assert (cached["decision"], cached["cache_hit"]) == ("abstained", True)
+    assert (after_ingest["decision"], after_ingest["cache_hit"]) == ("answered", False)
+
+
+def test_budget_reports_todays_spend_against_the_cap(client: TestClient) -> None:
+    request_id = ask(client, "Power draw?").json()["request_id"]
+    spent = client.get(f"/requests/{request_id}/receipt").json()["usd"]
+
+    budget = client.get("/budget").json()
+
+    tomorrow = datetime.combine(datetime.now(UTC).date() + timedelta(days=1), time(), UTC)
+    assert budget["spent_usd"] == pytest.approx(spent)
+    assert budget["cap_usd"] == 3.0
+    assert datetime.fromisoformat(budget["resets_at"]) == tomorrow

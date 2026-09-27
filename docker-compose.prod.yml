@@ -1,0 +1,198 @@
+# The droplet's stack (deploy/deploy.sh). Differs from docker-compose.yml in four ways:
+# secrets come from /etc/bas-assistant.env; Caddy terminates TLS and is the only service with a
+# public port; there is no Langfuse (drop order #2); Grafana is told its public URL.
+# On the droplet, /opt/bas-assistant/.env links to /etc/bas-assistant.env and sets
+# COMPOSE_FILE to this file, so plain `docker compose` and `make ingest` act on it.
+name: bas-assistant
+
+# Every container's log is capped: an uncapped json-file log filled a 58 GB disk on Sep 27.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 50m
+    max-file: "2"
+
+networks:
+  default:
+    ipam:
+      config:
+        # Fixed, so the app can trust X-Forwarded-For from this network and no other.
+        - subnet: 172.30.0.0/24
+
+services:
+  app:
+    logging: *logging
+    build: .
+    image: bas-assistant-app:prod
+    env_file: /etc/bas-assistant.env
+    environment:
+      # Caddy is the only proxy on this network. uvicorn takes the client address from the
+      # right-most X-Forwarded-For entry it does not trust, so each visitor gets their own
+      # per-IP limit and a forged header cannot pick one.
+      FORWARDED_ALLOW_IPS: 172.30.0.0/24
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
+    # Loopback only: Caddy reaches the app on the compose network; this port is for make eval.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - model_cache:/app/.cache/huggingface
+      - ./data/raw:/app/data/raw
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      # Two vCPUs: importing torch and loading the reranker takes longer than on the laptop.
+      start_period: 300s
+    restart: unless-stopped
+
+  migrate:
+    logging: *logging
+    image: bas-assistant-app:prod
+    env_file: /etc/bas-assistant.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  postgres:
+    logging: *logging
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: bas_assistant
+      POSTGRES_DB: bas_assistant
+    env_file: /etc/bas-assistant.env
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bas_assistant -d bas_assistant"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    logging: *logging
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  litellm:
+    logging: *logging
+    # main-stable, pinned by digest (LiteLLM 1.102.1), as in docker-compose.yml.
+    image: ghcr.io/berriai/litellm-database:main-stable@sha256:c38fe5eff11874941a21f5630ceb842f640dee7d5d5cde440b60ed0a71798f33
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        export DATABASE_URL="postgresql://bas_assistant:$${POSTGRES_PASSWORD}@postgres:5432/litellm"
+        && exec docker/prod_entrypoint.sh --config /app/config.yaml --port 4000
+    env_file: /etc/bas-assistant.env
+    volumes:
+      - ./config/litellm.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    restart: unless-stopped
+
+  prometheus:
+    logging: *logging
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  grafana:
+    logging: *logging
+    image: grafana/grafana:13.2.2
+    # Grafana is publicly reachable, so it gets its two passwords and nothing else from the env
+    # file (compose interpolates them from .env; the container never sees the vendor keys).
+    environment:
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:?}
+      GF_SERVER_DOMAIN: ${DOMAIN:?}
+      GF_SERVER_ROOT_URL: https://${DOMAIN}/grafana/
+    volumes:
+      - ./deploy/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/grafana/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  caddy:
+    logging: *logging
+    image: caddy:2
+    environment:
+      DOMAIN: ${DOMAIN:?}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates survive restarts, which keeps Let's Encrypt's rate limits out of reach.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+      grafana:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  model_cache:
+  promdata:
+  grafana_data:
+  caddy_data:
+  caddy_config:

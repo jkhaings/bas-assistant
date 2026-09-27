@@ -3,9 +3,11 @@
 # the web UI is published, on 127.0.0.1:3001 (Grafana has 3000). Its own Postgres, Redis,
 # ClickHouse and MinIO keep it apart from the app's data.
 #
-# TODO(session E): pin the image versions (4.46.0 ran here), and decide whether Langfuse goes on
-# the droplet at all: ClickHouse alone used about one core while idle here, which the CPU
-# reranker competes with (HANDOFF_D.md, drop order #2).
+# Off unless asked for (`COMPOSE_PROFILES=langfuse make up`), and not on the droplet at all:
+# ClickHouse alone used about one core while idle, which the CPU reranker competes with, and its
+# log filled the Docker disk on Sep 27 (drop order #2, session E). With it off, the app still
+# exports spans when LANGFUSE_* keys are set, and the exporter logs that it cannot reach it.
+# TODO(post-weekend): pin the image versions (4.46.0 ran in session D).
 #
 # Secrets come from ~/.bas-assistant-langfuse.env (`make observability-secrets`); the
 # project keys in it are the app's LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY.
@@ -53,6 +55,7 @@ x-langfuse-depends: &langfuse-depends
 services:
   langfuse-web:
     logging: *logging
+    profiles: [langfuse]
     image: docker.langfuse.com/langfuse/langfuse:4
     env_file: ${HOME}/.bas-assistant-langfuse.env
     environment:
@@ -77,6 +80,7 @@ services:
 
   langfuse-worker:
     logging: *logging
+    profiles: [langfuse]
     image: docker.langfuse.com/langfuse/langfuse-worker:4
     env_file: ${HOME}/.bas-assistant-langfuse.env
     environment: *langfuse-env
@@ -85,6 +89,7 @@ services:
 
   langfuse-postgres:
     logging: *logging
+    profiles: [langfuse]
     image: postgres:17
     env_file: ${HOME}/.bas-assistant-langfuse.env
     environment:
@@ -101,6 +106,7 @@ services:
 
   langfuse-clickhouse:
     logging: *logging
+    profiles: [langfuse]
     image: clickhouse/clickhouse-server:25.12
     user: "101:101"
     env_file: ${HOME}/.bas-assistant-langfuse.env
@@ -121,6 +127,7 @@ services:
 
   langfuse-minio:
     logging: *logging
+    profiles: [langfuse]
     image: cgr.dev/chainguard/minio
     env_file: ${HOME}/.bas-assistant-langfuse.env
     environment:
@@ -140,6 +147,7 @@ services:
 
   langfuse-redis:
     logging: *logging
+    profiles: [langfuse]
     image: redis:7-alpine
     env_file: ${HOME}/.bas-assistant-langfuse.env
     command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_AUTH\" --maxmemory-policy noeviction"]

@@ -47,10 +47,9 @@ class Settings(BaseSettings):
     # Per IP per minute. Every visitor of a role shares its demo user, so this is the
     # per-visitor control on the public link.
     ip_rate_limit: int = 20
-    # Part of the answer-cache key: bump when the corpus or the retrieval over it changes, so
-    # no stale answer survives ("2": the session D reranker).
-    # TODO(session E): a first ingest does not bump it, so abstains cached while the corpus was
-    # empty are served for their 24 h TTL; ingest before the link opens, or flush answer:*.
+    # The retrieval part of the answer-cache version: bump it when the retrieval over the corpus
+    # changes ("2": the session D reranker). The corpus part comes from the documents table on
+    # every question (db/corpus.current_corpus_version), so an ingest needs no bump.
     corpus_version: str = "2"
     redis_url: str = "redis://redis:6379/0"
     litellm_base_url: str = "http://litellm:4000"

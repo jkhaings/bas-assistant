@@ -28,7 +28,7 @@ from sqlalchemy import Engine, func, select
 
 from bas_assistant.cost.usage import record_usage
 from bas_assistant.db.activity import RequestChunk, Usage
-from bas_assistant.db.corpus import Chunk, Parent
+from bas_assistant.db.corpus import Chunk, Parent, current_corpus_version
 from bas_assistant.db.engine import get_engine
 from bas_assistant.evals.golden import GoldenResult
 from bas_assistant.evals.runs import record_run
@@ -151,18 +151,17 @@ def main() -> None:
         # Spend is real even when RAGAS fails halfway; the daily cap has to see it.
         for call in meter.calls:
             record_usage(engine, None, "judge", call)
+    version = current_corpus_version(engine, settings.corpus_version)
     scores = GoldenRunScores(
         run_at=datetime.now(UTC).isoformat(timespec="seconds"),
-        corpus_version=settings.corpus_version,
+        corpus_version=version,
         golden=summarize(results),
         failures={f"{r.case_id}-{r.role}": r.failure for r in results if not r.passed},
         overall=category_scores(rows),
         by_category=by_category(answered, rows),
     )
     answers_usd = _answers_usd(engine, results)
-    run_id = record_run(
-        engine, "golden", settings.corpus_version, scores.model_dump(), answers_usd + meter.usd()
-    )
+    run_id = record_run(engine, "golden", version, scores.model_dump(), answers_usd + meter.usd())
     summary = summary_markdown(scores, results, answers_usd, meter.usd())
     (RESULTS_DIR / "latest.md").write_text(summary)
     logger.info("eval run %s: %s", run_id, scores.golden.model_dump_json())

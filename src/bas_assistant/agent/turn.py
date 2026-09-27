@@ -75,7 +75,9 @@ class OpenTurn:
     thread_id: UUID
     user: UserContext
     question: str
-    new_thread: bool
+    # Only a thread's first question is cacheable. The key is taken once, so the answer is
+    # stored under the corpus version it was looked up with, even if an ingest lands meanwhile.
+    cache_key: str | None
     cached: TurnResult | None
     # The allowance day to refund is the day it was taken, even if the request ends later.
     opened_at: datetime
@@ -123,10 +125,6 @@ def _check_thread(runtime: AppRuntime, thread_id: UUID, user: UserContext) -> No
         raise HTTPException(409, detail="thread is waiting for ticket approval")
 
 
-def _key(runtime: AppRuntime, question: str, user: UserContext) -> str:
-    return cache_key(question, user.role, runtime.corpus_version, PROMPT_VERSION)
-
-
 def _audit_decision(
     runtime: AppRuntime, turn: OpenTurn, decision: Decision, route: Route | None
 ) -> None:
@@ -152,13 +150,14 @@ def open_turn(
     redaction = redact(question)
     question = redaction.text
     # Follow-ups depend on earlier turns, so only a thread's first question is cacheable.
+    key = None
     cached = None
     if thread_id is None:
-        cached = get_cached(runtime.redis, _key(runtime, question, user), TurnResult)
+        key = cache_key(question, user.role, runtime.corpus_version(), PROMPT_VERSION)
+        cached = get_cached(runtime.redis, key, TurnResult)
     # A cache hit costs nothing, so it does not count against the allowance.
     if cached is None:
         _take_allowance(runtime, user, now)
-    new_thread = thread_id is None
     thread_id = thread_id or create_thread(runtime.agent.engine, user.id)
     request_id = uuid4()
     open_request(runtime.agent.engine, request_id, thread_id, user, question)
@@ -173,9 +172,7 @@ def open_turn(
     # The trace input is the redacted question, the same string as the requests row.
     tag_trace(request_id, thread_id, user.role)
     set_trace_input(question)
-    return OpenTurn(
-        request_id, thread_id, user, question, new_thread, cached, now, time.perf_counter()
-    )
+    return OpenTurn(request_id, thread_id, user, question, key, cached, now, time.perf_counter())
 
 
 def _elapsed_ms(turn: OpenTurn) -> int:
@@ -284,8 +281,8 @@ def close_turn(runtime: AppRuntime, turn: OpenTurn) -> AskResponse:
         model=state.answer_model,
     )
     cacheable = decision in ("answered", "abstained") and not state.notes and not state.ticket_id
-    if turn.new_thread and cacheable:
-        put_cached(runtime.redis, _key(runtime, turn.question, turn.user), result)
+    if turn.cache_key is not None and cacheable:
+        put_cached(runtime.redis, turn.cache_key, result)
     return _respond(result, turn, state)
 
 
