@@ -12,12 +12,15 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from bas_assistant.db.engine import Base
+
+# JSONB on Postgres; plain JSON lets unit tests create tickets and audit on SQLite.
+_JSONB = JSON().with_variant(JSONB(), "postgresql")
 
 
 class User(Base):
@@ -54,9 +57,12 @@ class Request(Base):
     role: Mapped[str] = mapped_column(String(20))
     question_redacted: Mapped[str] = mapped_column(Text)
     route: Mapped[str | None] = mapped_column(String(20))  # fast | strong — set from session B
-    # retrieved | abstained in session A; answered | refused | paused | failed join in B/C
-    decision: Mapped[str] = mapped_column(String(20))
-    latency_ms: Mapped[int] = mapped_column(Integer)
+    # retrieved | abstained in session A; answered | refused | paused | failed join in B/C.
+    # Null while the agent graph is still running (migration 0003).
+    decision: Mapped[str | None] = mapped_column(String(20))
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    retrieval_ms: Mapped[int | None] = mapped_column(Integer)
+    rerank_ms: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -80,6 +86,8 @@ class Usage(Base):
     """One row per model call: embeddings now, router/answer/judge from session B."""
 
     __tablename__ = "usage"
+    # The daily USD cap sums today's rows (migration 0003).
+    __table_args__ = (Index("ix_usage_created_at", "created_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     # Nullable: ingestion embeds documents with no /ask request behind them.
@@ -130,7 +138,7 @@ class Ticket(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     request_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("requests.id", ondelete="CASCADE"))
-    draft: Mapped[dict[str, object]] = mapped_column(JSONB)
+    draft: Mapped[dict[str, object]] = mapped_column(_JSONB)
     status: Mapped[str] = mapped_column(String(20), default="proposed")
     approver_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     jira_key: Mapped[str | None] = mapped_column(String(50))
@@ -148,7 +156,7 @@ class Audit(Base):
     )
     actor: Mapped[str] = mapped_column(String(50))
     action: Mapped[str] = mapped_column(String(50))
-    detail: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
+    detail: Mapped[dict[str, object]] = mapped_column(_JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

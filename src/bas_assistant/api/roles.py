@@ -16,6 +16,13 @@ _ACL_GROUPS: dict[str, list[str]] = {
 }
 
 
+_TOOLS: dict[str, list[str]] = {
+    "support": [],
+    "engineer": ["create_ticket"],
+    "admin": ["create_ticket"],
+}
+
+
 class Role(StrEnum):
     """A demo role, set by the X-Demo-Role header."""
 
@@ -27,6 +34,11 @@ class Role(StrEnum):
 def acl_groups_for_role(role: Role) -> list[str]:
     """Return the ACL groups a role can see."""
     return _ACL_GROUPS[role.value]
+
+
+def tools_for_role(role: Role) -> list[str]:
+    """Return the tools a role may use; the model never hears about the others."""
+    return _TOOLS[role.value]
 
 
 def demo_role(x_demo_role: str = Header(default=Role.SUPPORT.value, alias="X-Demo-Role")) -> Role:

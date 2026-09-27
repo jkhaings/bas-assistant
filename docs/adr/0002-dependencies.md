@@ -10,7 +10,7 @@ Running log — add a line whenever a new dependency is added to pyproject.toml.
 | uvicorn[standard] | ≥0.30 | — | ASGI server for FastAPI |
 | pydantic | ≥2.7 | dataclasses | Validation, SecretStr, structured LLM output |
 | pydantic-settings | ≥2.3 | os.environ | Reads env vars into typed Settings with masking |
-| httpx | ≥0.28.1 | urllib.request | Sync HTTP client; used by the crawler and the embedding provider |
+| httpx | ≥0.28.1 | urllib.request | Sync HTTP client: the crawler, the embedding provider, and the LiteLLM proxy calls (`MockTransport` fakes the proxy in unit tests) |
 | sqlalchemy | ≥2.0.36 | raw psycopg SQL | Typed Core statements, no hand-built SQL strings, Alembic integration |
 | alembic | ≥1.14 | hand-rolled migration scripts | Versioned, reversible schema migrations |
 | psycopg[binary] | ≥3.2 | — | Postgres driver; binary extra avoids a build toolchain in the image |
@@ -21,6 +21,11 @@ Running log — add a line whenever a new dependency is added to pyproject.toml.
 | llama-index-core | ≥0.12 | — | `MarkdownNodeParser` + `SentenceSplitter` for parent-child chunking |
 | sentence-transformers | ≥3.3 | — | Local `CrossEncoder` reranker (`bge-reranker-base`), no network call at query time |
 | torch | ≥2.0 | — | Made a direct dependency (not left implicit via sentence-transformers): uv's `[tool.uv.sources]` platform-conditional index override only takes effect for packages also listed in `[project.dependencies]`, not purely-transitive ones — confirmed by reproduction, not documented. Without this, torch pulled the CUDA-toolkit meta-dependencies (~3 GB of nvidia-* wheels) even under the CPU-only index override. |
+| langgraph | ≥1.2 | a hand-written loop | Typed state graph, `interrupt` for the human gate, checkpoint/resume (session B) |
+| langgraph-checkpoint-postgres | ≥3.1 | pickle to a table | Postgres checkpointer so a paused thread survives restarts; uses the same psycopg driver (session B) |
+| psycopg-pool | ≥3.3 | — | Connection pool the checkpointer requires (session B) |
+| redis | ≥8.1 | functools.lru_cache | Shared answer cache and per-user allowance across workers and restarts (session B) |
+| langchain-core | ≥1.6 | — | Already installed by langgraph; declared because the app imports `RunnableConfig` from it (session B) |
 
 ## Dev / CI
 
@@ -30,6 +35,9 @@ Running log — add a line whenever a new dependency is added to pyproject.toml.
 | ruff | — | Linter + formatter, replaces flake8+isort+pyupgrade |
 | mypy | — | Static type checking, strict mode |
 | pre-commit | — | Git hook manager; gitleaks and ruff run pre-commit |
+| fakeredis | — | Stands in for Redis in unit tests (no docker in the unit tier) (session B) |
+| httpx2 | — | starlette 1.x TestClient requires it; typed test helpers (session B) |
+| pyyaml + types-pyyaml | — | Test reads config/litellm.yaml to check aliases and fallback order (session B) |
 
 ## Notes
 

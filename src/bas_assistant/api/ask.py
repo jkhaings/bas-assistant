@@ -1,4 +1,7 @@
-"""POST /ask: hybrid retrieval with citations. answer is always null until session B."""
+"""POST /search: hybrid retrieval with citations and no model answer (session A's /ask).
+
+POST /ask is the agent graph (agent/api.py); this keeps retrieval inspectable on its own.
+"""
 
 from __future__ import annotations
 
@@ -106,13 +109,14 @@ def _record_result(
         RequestChunk(request_id=request.id, chunk_id=item.chunk_id, rank=rank, score=item.score)
         for rank, item in enumerate(result.retrieved, start=1)
     )
+    provider, model = result.embed_usage.provider_and_model(embed_model)
     session.add(
         Usage(
             request_id=request.id,
             stage="embed",
             alias="embed",
-            model=embed_model,
-            provider="openai",
+            model=model,
+            provider=provider,
             input_tokens=result.embed_usage.input_tokens,
             usd=result.embed_usage.usd,
             latency_ms=result.embed_usage.latency_ms,
@@ -121,7 +125,7 @@ def _record_result(
     session.commit()
 
 
-@router.post("/ask", response_model=AskResponse)
+@router.post("/search", response_model=AskResponse)
 def ask(
     body: AskRequest,
     role: Role = Depends(demo_role),

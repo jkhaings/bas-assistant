@@ -5,3 +5,6 @@
 -- Creates a second database for `make test-int`, owned by the same app user,
 -- so `alembic upgrade head` behaves identically against it.
 CREATE DATABASE bas_test OWNER bas_assistant;
+
+-- The LiteLLM proxy keeps its virtual keys and spend logs in its own database.
+CREATE DATABASE litellm OWNER bas_assistant;

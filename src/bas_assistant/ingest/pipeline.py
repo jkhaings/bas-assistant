@@ -98,13 +98,14 @@ def _embed_children(
         result = embedder.embed([draft.text for draft in batch])
         total_tokens += result.input_tokens
         total_usd += result.usd
+        provider, model = result.provider_and_model(embedder.model)
         session.add(
             Usage(
                 request_id=None,
                 stage="embed",
                 alias="embed",
-                model=embedder.model,
-                provider="openai",
+                model=model,
+                provider=provider,
                 input_tokens=result.input_tokens,
                 usd=result.usd,
                 latency_ms=result.latency_ms,

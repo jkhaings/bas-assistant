@@ -1,5 +1,5 @@
-# Session A: app, migrate (one-shot), postgres+pgvector, redis.
-# Sessions B-D add litellm, langfuse, prometheus, grafana.
+# Sessions A+B: app, migrate (one-shot), postgres+pgvector, redis, litellm.
+# Sessions C-D add langfuse, prometheus, grafana.
 
 services:
   app:
@@ -9,6 +9,10 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      litellm:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -53,11 +57,42 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Published on localhost for make test-int and make eval.
+    ports:
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+    restart: unless-stopped
+
+  litellm:
+    # main-stable, pinned by digest (LiteLLM 1.102.1).
+    image: ghcr.io/berriai/litellm-database:main-stable@sha256:c38fe5eff11874941a21f5630ceb842f640dee7d5d5cde440b60ed0a71798f33
+    # The env file holds the Postgres password as POSTGRES_PASSWORD and compose cannot
+    # interpolate from env_file, so the proxy's DATABASE_URL is assembled in the container.
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        export DATABASE_URL="postgresql://bas_assistant:$${POSTGRES_PASSWORD}@postgres:5432/litellm"
+        && exec docker/prod_entrypoint.sh --config /app/config.yaml --port 4000
+    env_file: ${HOME}/.bas-assistant.env
+    volumes:
+      - ./config/litellm.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
 volumes:

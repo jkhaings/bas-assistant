@@ -1,7 +1,7 @@
 """Embedding provider: an OpenAI-compatible /v1/embeddings client.
 
-Session B repoints embed_base_url/embed_model at the LiteLLM proxy's `embed`
-alias by settings change only — nothing here imports a vendor SDK.
+Settings point it at the LiteLLM proxy's `embed` alias, authenticated with the app's
+virtual key — nothing here imports a vendor SDK.
 """
 
 from __future__ import annotations
@@ -23,6 +23,13 @@ class EmbedBatch(BaseModel):
     input_tokens: int
     usd: Decimal
     latency_ms: int
+    # "<provider>/<model>" of the deployment the proxy used, when it reports one.
+    deployment: str = ""
+
+    def provider_and_model(self, requested_model: str) -> tuple[str, str]:
+        """For the usage row: what served the batch, or `unknown` and the requested name."""
+        provider, _, model = (self.deployment or f"unknown/{requested_model}").partition("/")
+        return provider, model
 
 
 class EmbeddingProvider(Protocol):
@@ -41,7 +48,7 @@ class OpenAIEmbedder:
         self._usd_per_mtok = settings.embed_usd_per_mtok
         self._client = httpx.Client(
             base_url=settings.embed_base_url,
-            headers={"Authorization": f"Bearer {settings.openai_api_key.get_secret_value()}"},
+            headers={"Authorization": f"Bearer {settings.litellm_api_key.get_secret_value()}"},
             timeout=30.0,
             transport=transport,  # tests substitute an httpx.MockTransport
         )
@@ -54,5 +61,13 @@ class OpenAIEmbedder:
         latency_ms = int((time.monotonic() - start) * 1000)
         vectors = [item["embedding"] for item in body["data"]]
         tokens = int(body["usage"]["total_tokens"])
-        usd = (Decimal(tokens) / Decimal(1_000_000)) * self._usd_per_mtok
-        return EmbedBatch(vectors=vectors, input_tokens=tokens, usd=usd, latency_ms=latency_ms)
+        priced = (Decimal(tokens) / Decimal(1_000_000)) * self._usd_per_mtok
+        # The proxy's own price sheet wins; the setting covers a response without it.
+        usd = Decimal(response.headers.get("x-litellm-response-cost", priced))
+        return EmbedBatch(
+            vectors=vectors,
+            input_tokens=tokens,
+            usd=usd,
+            latency_ms=latency_ms,
+            deployment=response.headers.get("x-litellm-model-id", ""),
+        )

@@ -30,10 +30,14 @@ class RetrievedChunk(BaseModel):
 class Citation(BaseModel):
     """One parent-level result, for the user-facing `citations` view."""
 
+    # The best child chunk: the id the answer model cites the passage by.
+    chunk_id: uuid.UUID
     document_title: str
     page: int
     source_url: str
     snippet: str
+    # The whole parent, which is what the answer model reads.
+    passage: str
     score: float
 
 
@@ -97,10 +101,12 @@ def _best_child_per_parent(
 
 def _citation(parent: Parent, chunk: Chunk, score: float) -> Citation:
     return Citation(
+        chunk_id=chunk.id,
         document_title=parent.document.title,
         page=chunk.page,
         source_url=parent.document.source_url,
         snippet=chunk.text[:300],
+        passage=parent.text,
         score=score,
     )
 

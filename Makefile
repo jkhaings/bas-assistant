@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := help
-.PHONY: help up down test test-int lint format check-env preflight ingest eval redteam
+.PHONY: help up down test test-int lint format check-env preflight ingest eval redteam \
+        litellm-keys litellm-secrets
 
 PYTHON  := uv run python
 PYTEST  := uv run pytest
@@ -8,13 +9,20 @@ MYPY    := uv run mypy
 ALEMBIC := uv run alembic
 
 # ── required env variable names (values never printed) ──────────────────────
+# Proxy admin key and the two virtual keys; `make litellm-secrets` generates them
+LITELLM_VARS := LITELLM_MASTER_KEY LITELLM_API_KEY LITELLM_SERVICE_KEY
 REQUIRED_VARS := OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY ADMIN_TOKEN \
-                 GRAFANA_ADMIN_PASSWORD POSTGRES_PASSWORD
+                 GRAFANA_ADMIN_PASSWORD POSTGRES_PASSWORD $(LITELLM_VARS)
 # Optional until session D mints them from the self-hosted Langfuse instance
 OPTIONAL_LANGFUSE_VARS := LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
 
+# Host-side runs: load the env file, then reach the compose services on their published ports
+WITH_ENV  := set -a && . "$$HOME/.bas-assistant.env" && set +a &&
+HOST_URLS := POSTGRES_HOST=localhost POSTGRES_PORT=5433 LITELLM_BASE_URL=http://localhost:4000
+
 help:
 	@echo "Targets: up down test test-int lint format check-env preflight ingest eval redteam"
+	@echo "         litellm-keys litellm-secrets"
 
 # ── secret guard ─────────────────────────────────────────────────────────────
 check-env:
@@ -44,6 +52,20 @@ check-env:
 # ── docker ───────────────────────────────────────────────────────────────────
 up: check-env
 	docker compose up -d --build --wait
+	$(MAKE) litellm-keys
+
+# Register the dev ($5/month) and service ($2/month) virtual keys with the proxy
+litellm-keys:
+	@$(WITH_ENV) $(HOST_URLS) $(PYTHON) -m bas_assistant.llm.provision
+
+# Append a random value for each missing LITELLM_* variable; values are never printed
+litellm-secrets:
+	@ENV_FILE="$$HOME/.bas-assistant.env"; \
+	for VAR in $(LITELLM_VARS); do \
+	  if grep -q "^$$VAR=." "$$ENV_FILE"; then continue; fi; \
+	  printf '%s=sk-%s\n' "$$VAR" "$$(openssl rand -hex 24)" >> "$$ENV_FILE"; \
+	  echo "added $$VAR"; \
+	done
 
 down:
 	docker compose down
@@ -52,11 +74,13 @@ down:
 test:
 	$(PYTEST) -m unit
 
+# bas_test and Redis db 1, so test rows never reach the app's spend totals or cache
 test-int: check-env
 	@ENV_FILE="$$HOME/.bas-assistant.env"; \
 	set -a; . "$$ENV_FILE"; set +a; \
-	export POSTGRES_HOST=localhost POSTGRES_PORT=5433 POSTGRES_DB=bas_test; \
-	$(ALEMBIC) upgrade head && $(PYTEST) -m integration
+	export POSTGRES_HOST=localhost POSTGRES_PORT=5433 POSTGRES_DB=bas_test \
+	       REDIS_URL=redis://localhost:6379/1; \
+	$(ALEMBIC) upgrade head && $(ALEMBIC) check && $(PYTEST) -m integration
 
 # ── quality ──────────────────────────────────────────────────────────────────
 lint:
@@ -79,8 +103,9 @@ preflight: lint test
 ingest:
 	docker compose exec app python -m bas_assistant.ingest
 
+# Live models through the local proxy. Session C adds the golden set and RAGAS.
 eval:
-	@echo "not implemented until session C" >&2; exit 1
+	@$(WITH_ENV) $(HOST_URLS) REDIS_URL=redis://localhost:6379/0 $(PYTEST) -m eval
 
 redteam:
 	@echo "not implemented until session C" >&2; exit 1

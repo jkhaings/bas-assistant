@@ -1,0 +1,64 @@
+# LiteLLM proxy: the only place vendor models and keys are named.
+# The app calls the aliases fast / strong / embed. Each deployment's model_info.id is
+# "<provider>/<model>" because the app records it from the x-litellm-model-id header.
+
+model_list:
+  - model_name: fast
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      id: openai/gpt-4o-mini
+
+  - model_name: fast-fallback
+    litellm_params:
+      # gemini-2.0-flash and 2.5-flash return 404 (retired) as of Sep 26 2026.
+      model: gemini/gemini-3.8-flash
+      api_key: os.environ/GEMINI_API_KEY
+      # Default thinking spends the router's 60-token budget before any JSON is written.
+      reasoning_effort: low
+    model_info:
+      id: gemini/gemini-3.8-flash
+
+  - model_name: strong
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+      # Prompt caching on the system prompt, only where the alias resolves to Claude.
+      # TODO(session C): inactive until the system prompt passes Anthropic's 1,024-token minimum.
+      cache_control_injection_points:
+        - location: message
+          role: system
+    model_info:
+      id: anthropic/claude-sonnet-4-6
+
+  - model_name: strong-fallback
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      id: openai/gpt-4o
+
+  - model_name: embed
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      id: openai/text-embedding-3-small
+
+router_settings:
+  # If every strong deployment fails, a fast answer beats none.
+  fallbacks:
+    - fast: [fast-fallback]
+    - strong: [strong-fallback, fast]
+  # The fallback is the retry. Worst case is four 30 s attempts; the app waits 130 s.
+  num_retries: 0
+  timeout: 30
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # Spend logs and virtual keys live in the `litellm` database next to the app's.
+  database_url: os.environ/DATABASE_URL

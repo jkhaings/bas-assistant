@@ -17,12 +17,12 @@ This file becomes `docs/ARCHITECTURE.md` in the repo. Keep it current-state trut
 
 | Session | Branch | Status |
 |---|---|---|
-| 0 — scaffold | `main` | ✅ shipped: `/healthz`, settings, logging, CI |
-| A — retrieval | `a-retrieval` | ✅ shipped: ingest (crawl/parse/chunk/embed), hybrid retrieval, `POST /ask` (citations only, no answer), `GET /documents` |
-| B — graph | `b-graph` | ⏳ not started |
-| C — guardrails | `c-guardrails` | ⏳ not started |
-| D — observability | `d-observability` | ⏳ not started |
-| E — ship | `e-ship` | ⏳ not started |
+| 0 — scaffold | `main` | Shipped: `/healthz`, settings, logging, CI |
+| A — retrieval | `a-retrieval` | Shipped: ingest (crawl/parse/chunk/embed), hybrid retrieval, `GET /documents`; its retrieval-only `/ask` is now `POST /search` |
+| B — graph | `b-graph` | Built on branch with main (A) merged in, not merged to main: LiteLLM proxy (fast / strong / embed, embeddings included), router, Redis cache, `usage` + receipt, daily cap + allowance, LangGraph with human gate on a Postgres checkpointer, retrieve node on A's hybrid search, `/ask`, `/ask/stream`, `/approve`, `/threads/{id}/history`, `/tickets`, `/requests/{id}/receipt` |
+| C — guardrails | `c-guardrails` | Not started |
+| D — observability | `d-observability` | Not started |
+| E — ship | `e-ship` | Not started |
 
 
 ## 1. What it does, who it's for
@@ -63,6 +63,8 @@ Non-goals: no free chat about anything outside the corpus, no actions other than
 
 Cost rolls up from `usage`; adoption from `requests` and `feedback`; quality from `flags` plus eval results stored in `eval_runs`. All tables exist as of session A (one migration each for corpus+users, then the rest of activity) so no later session alters a table another session depends on; sessions B–D are the first to *write* to most of the activity rows beyond users/threads/requests/request_chunks/usage.
 
+**Session B additions (migration `0003`)**: `requests.retrieval_ms` and `requests.rerank_ms`; `requests.decision` and `requests.latency_ms` become nullable, because a graph turn writes its request row before it runs and fills them in when it closes; `ix_usage_created_at` for the daily cap. `Ticket.draft` and `Audit.detail` use a JSON type with a JSONB variant (same DDL on Postgres) so unit tests can create them on SQLite. LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) are created by `PostgresSaver.setup()` at startup and excluded from Alembic autogenerate (`db/migrations/env.py`). LiteLLM keeps virtual keys and spend logs (`LiteLLM_SpendLogs`) in a separate `litellm` database on the same server (`deploy/postgres/init.sql`); `make test-int` uses `bas_test`. The checkpoint tables hold the raw question and every turn's history, unredacted and with no expiry; session C must redact before the graph runs or purge them. `budgets` exists but is unused: limits are env settings plus LiteLLM virtual-key budgets.
+
 ---
 
 ## 3. Ingestion pipeline (`make ingest`, manual — Prefect is the deferred production path)
@@ -79,19 +81,19 @@ Built in session A, `src/bas_assistant/ingest/`:
 
 Idempotent and resumable (a re-run with no changes costs $0 in both crawl and embed time); not yet scheduled — `make ingest` is a manual step until a later session wants a cron/Prefect flow.
 
-**Deferred from this session:** Prefect scheduling (ingest is a manual `make ingest`), the Zendesk O3 help center, document retirement (removed sources' chunks are not pruned), and the LiteLLM `embed` alias (session B).
+**Deferred from this session:** Prefect scheduling (ingest is a manual `make ingest`), the Zendesk O3 help center, and document retirement (removed sources' chunks are not pruned). Since the session B merge, embeddings go through the LiteLLM proxy's `embed` alias with the app's virtual key (`embed_base_url`, `embed_model`, `litellm_api_key`), and USD comes from the proxy's `x-litellm-response-cost` header, with `embed_usd_per_mtok` as the fallback.
 
 ---
 
 ## 4. The request path
 
-**As of session A** — no graph, no guards, no cache, no answer generation yet; `POST /ask` is retrieval-only:
+**`POST /search`** (session A's retrieval-only endpoint, formerly `/ask`; kept for inspecting retrieval on its own). `POST /ask` is the agent graph, below; its retrieve node runs the same `retrieve()`:
 
 ```
 Web (curl, for now)
       │
       ▼
- FastAPI POST /ask ── X-Demo-Role header (default "support", 422 if unrecognised) → acl_groups
+ FastAPI POST /search ── X-Demo-Role header (default "support", 422 if unrecognised) → acl_groups
       │
       ▼
  retrieve(): embed the question → pgvector top-20 ∪ tsvector top-20 (both acl_groups &&-filtered)
@@ -108,10 +110,22 @@ Web (curl, for now)
  Response: {request_id, answer: null, citations[], retrieved[], abstained, timings}
 ```
 
-The full path in the design (role→tool-allowlist, budget cap, Presidio/injection input guard, Redis
-cache, the LangGraph answer/validate/ticket/gate loop, output guard, audit, streaming) is sessions
-B and C; this section will be rewritten again once those land. Retrieval-only p95 is well under a
-second locally (the reranker is the only non-trivial cost, and it runs on CPU).
+Retrieval-only p95 is well under a second locally (the reranker is the only non-trivial cost,
+and it runs on CPU).
+
+**As built (session B)**, `src/bas_assistant/agent/api.py` and `agent/turn.py`:
+1. `X-Demo-Role` header through A's `api/roles.demo_role` (default support, 422 if unrecognised) → seeded demo user, `acl_groups`, tool allowlist (`tools_for_role`).
+2. An existing `thread_id` must belong to that role's user (404 otherwise, so one role never sees another's history) and must not be waiting at the gate (409). `GET /threads/{id}/history` applies the same ownership check.
+3. Global daily USD cap: sum of today's (UTC) `usage.usd` ≥ `DAILY_USD_CAP` → 503 `{reason: "daily_budget_reached", resets_at}`.
+4. Cache check, first question of a thread only (follow-ups depend on history). A hit costs $0 and skips step 5.
+5. Daily allowance: `USER_DAILY_QUESTIONS` (default 50) per user per UTC day, Redis counter → 429 `daily_allowance_used` with `Retry-After`. With no login every visitor of a role is the same demo user, so in the demo this is a per-role quota; per-visitor limiting is session C's per-IP limiter.
+6. `requests` row; the stored question passes through `logging.redact` (emails and key shapes only until Presidio lands in C).
+7. Graph (section 5). A gateway failure after all fallbacks → 503 `model_unavailable`, request `failed`, allowance refunded (to the day it was taken). An answer the validator rejects keeps its place in the allowance, since its model calls were billed.
+8. `requests` updated with route, decision, latency, retrieval and rerank ms; `request_chunks` written for the passages the graph read (rank, score, `used_in_answer` = cited); answered or abstained first turns are cached.
+
+`POST /ask/stream` takes the same path and sends SSE events: `node` as each node finishes, then `answer`. Answer tokens are not streamed, because nothing reaches the user before `validate` passes it.
+
+**Deferred**: Presidio and input rails, per-IP limit (C); tracing (D); API keys for Slack / n8n / MCP (post-weekend).
 
 ---
 
@@ -143,13 +157,28 @@ decision, errors[], usage_so_far
 
 **Tool authorization**: tools are declared per role in config, enforced in `propose_ticket` and again in the MCP server. The model never sees a tool it isn't allowed to use.
 
+**As built (session B)**, `src/bas_assistant/agent/`:
+- **State**: `AgentState` in `state.py`: request_id, question, user, route, topic, retrieved, retrieval_ms, rerank_ms, draft_raw, draft, answer_model, attempts, validation_errors, ticket_id, approval, approver_id, decision, final_answer, notes, history. `history` has an append reducer and accumulates across a thread's turns; every other field is reset per turn. The redacted question lives on the `requests` row, not in state.
+- **route**: `llm/router.py`, `fast` alias, `max_tokens` 60. Output that fails the schema routes to `strong`. The topic is echoed in the abstain message, so anything but short plain words (no `:`, `/` or `.`) is dropped.
+- **retrieve**: `agent/corpus.search_corpus` runs session A's `retrieve()` (query embed through the `embed` alias → pgvector ∪ tsvector, ACL-filtered → RRF → local rerank → top-5 parents). Below `rerank_threshold` it returns no passages → `abstain`. Each passage is a whole parent, cited by the id of its best child chunk. The query embedding's cost is written as a `usage` row (stage `embed`). The graph takes the retriever as an injected `Retriever(question, acl_groups) -> Retrieval`, so unit tests use a fixed one.
+- **answer**: alias from `route`, `max_tokens` 700, temperature 0, strict JSON schema of `AnswerOut`. Passages are rendered as escaped `<passage id=… document=… page=… source_url=…>` blocks. `AnswerOut` = `{answerable, answer, citations, confidence, needs_ticket, ticket_draft}`.
+- **validate**: parses `AnswerOut` (a schema failure counts as a violation). `answerable: false` → decision `abstained` with the fixed abstain message (the model's wording is never shown), unless the role may create tickets and the model drafted one. Otherwise: citations ⊆ retrieved chunk ids; at least one citation when answerable; every followable link (any-case `http(s)://`, `www.`, inline link targets including `//host` and `javascript:`, reference definitions `[1]: url`, `<scheme:…>` autolinks, HTML `href`/`src`) must be a retrieved passage's `source_url` (stricter than all of `documents`); no images (any `![` or `<img`); the same link and image rules apply to the ticket title and body; `needs_ticket` requires a draft. A ticket for something the passages don't cover shows a fixed message instead of the model's text, with no citation cards, and the request is recorded as `abstained` once the gate resolves. One retry with the violations listed, then decision `failed`, a fixed safe message, and an `answer_rejected` audit row.
+- **propose_ticket**: a role without `create_ticket` gets no ticket and a note in the response; its system prompt says `needs_ticket` is always false. Otherwise a `tickets` row (proposed) and a `ticket_proposed` audit row.
+- **human_gate**: `interrupt`. `POST /approve` with `X-Admin-Token` (constant-time compare; 401 otherwise) resumes with `{approve, approver_id}`; the ticket becomes approved or rejected, with an audit row. A Redis `SET NX` lock per thread, released when the resume finishes (60 s expiry as a backstop), turns a concurrent second approval into 409 instead of a second resume; the response reports the stored outcome.
+- **act**: internal table only: status `filed` and a `ticket_filed` audit row (no Jira).
+- **finish**: final decision, and appends the turn to `history`. The API writes the `requests` row around the graph.
+- **Checkpoints**: `PostgresSaver` with a msgpack allowlist of the state classes (`graph.CHECKPOINT_SERDE`), so a checkpoint can only rebuild those types. A thread paused at the gate survives an app restart (integration test).
+- **Memory**: the last 6 turns go into the answer prompt; `GET /threads/{id}/history` returns all turns.
+
+**Deferred**: metrics in `finish` (D); Jira in `act` (post-weekend); tool allowlist at `/approve` beyond the admin token (C); the MCP server.
+
 ---
 
 ## 6. Cost tracking
 
 **Where the numbers come from.** Every model call, including embeddings and the router, goes through LiteLLM. LiteLLM knows the price sheet per model and returns input, output and cached token counts and USD. The app writes one `usage` row per call with `request_id`, `stage`, `alias`, `model`, `provider`, `cache_hit`.
 
-**As of session A**, this is the target, not yet the reality: there is no LiteLLM proxy in the stack until session B builds it. Session A's `usage` rows (`stage="embed"`) come from a thin `EmbeddingProvider` calling the OpenAI embeddings endpoint directly over `httpx` (no vendor SDK, but no LiteLLM either) — `embed_base_url`/`embed_model` are settings specifically so B repoints them at the `embed` alias with no code change. USD is computed locally from `embed_usd_per_mtok`, not read back from LiteLLM's price sheet.
+Since the session B merge this holds for embeddings too: session A's `EmbeddingProvider` calls the proxy's `embed` alias with the app's virtual key, and records the deployment and USD the proxy reports.
 
 **Attribution.** `requests` carries user and role; users carry a team tag. Cost per request = sum of its usage rows. Cost per user, per team, per day, per stage = one GROUP BY. The router's cost is visible separately, so you can prove routing pays for itself.
 
@@ -169,6 +198,15 @@ decision, errors[], usage_so_far
 - Azure Cost Management budget for the infrastructure side.
 
 **Forecast method.** cost_per_answer × answers_per_day × 22 × (1 + 20% buffer). Re-fit monthly from real `usage` data. Written down before launch so the number is a prediction, not an excuse.
+
+**As built (session B)**:
+- **Gateway**: `src/bas_assistant/llm/gateway.py` calls the LiteLLM proxy over HTTP by alias; no vendor SDK in the app. `config/litellm.yaml`: `fast` = gpt-4o-mini → `fast-fallback` gemini-3.8-flash (`reasoning_effort: low`); `strong` = claude-sonnet-4-6 → `strong-fallback` gpt-4o → the `fast` group; `embed` = text-embedding-3-small. `num_retries: 0` (the fallback is the retry) and a 30 s timeout per attempt; the app's HTTP timeout is 130 s, longer than the proxy's worst case (four 30 s attempts if `fast`'s own fallback also applies). gemini-2.0-flash (in the original plan) and 2.5-flash return 404 (retired); verified live Sep 26. `tests/eval` also calls the `fast-fallback` and `strong-fallback` groups directly (still through the proxy), the one exception to the three-alias rule, so a retired fallback shows up before the day a primary fails.
+- **Numbers**: each `usage` row takes model and provider from the `x-litellm-model-id` header (deployment id `<provider>/<model>`, so a fallback is attributed to the model that answered), USD from `x-litellm-response-cost`, tokens from the response body. A cache hit writes one $0 row with model `cache`.
+- **Receipt**: `GET /requests/{id}/receipt` → route, model, tokens, usd, retrieval_ms, rerank_ms, model_ms, total_ms, cache_hit, and one line per call, so router cost is visible separately.
+- **Controls built**: (1) virtual keys `dev` ($5 / 30 days) and `service` ($2 / 30 days), registered by `make litellm-keys`; the per-channel keys wait for those channels. (2) Allowance of 50 questions per user per UTC day (per role in the demo; cache hits are free), refunded only when the models are unavailable; global daily cap `DAILY_USD_CAP` (default $3) → 503. (3) `max_tokens` 60 for the router, 700 for the answer; 6 turns of history. (4) Exact-match cache, 24 h TTL, key = normalized question + role + `CORPUS_VERSION`. (5) Prompt caching is configured on the Claude deployment (`cache_control_injection_points`) but inactive: the system prompt is about 300 tokens, under Anthropic's 1,024-token minimum, and live receipts show `cached_tokens` 0. (6) Routing.
+- LiteLLM also logs every call with its cost in `LiteLLM_SpendLogs` (database `litellm`).
+
+**Deferred**: team attribution (`users.team` exists; nothing groups by it yet); a LiteLLM key-budget refusal surfaces as 503 `model_unavailable`, not 429; Grafana panels and alerts (D); `docs/cost-model.md` (E); the `budgets` table.
 
 ---
 
@@ -237,6 +275,7 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
 ## 12. Deployment
 
 - **Local**: `docker compose up` brings app, Postgres+pgvector, Redis, LiteLLM, Ollama, Langfuse, Prometheus, Grafana, n8n.
+  As built (sessions A+B): `make up` starts `migrate` (one-shot `alembic upgrade head`), app, Postgres + pgvector (127.0.0.1:5433, password from the env file), Redis (127.0.0.1:6379, for host-side tests) and the LiteLLM proxy (127.0.0.1:4000, image pinned by digest, its `DATABASE_URL` assembled in the container from `POSTGRES_PASSWORD`), then registers the virtual keys. Ollama, Langfuse, Prometheus, Grafana and n8n are not in compose yet.
 - **Public demo**: the same Compose file (production profile: no Ollama if the droplet is small, Langfuse optional) on a DigitalOcean droplet. Caddy reverse proxy with auto-TLS: `/` → web app + API, `/grafana` → Grafana with anonymous Viewer access limited to the two dashboards. Cloudflare DNS A record on the jasonkhaings.com subdomain. Secrets in the droplet's env file only. `deploy/deploy.sh` pulls the tagged image and restarts.
 - **CI**: one GitHub Actions workflow, one job (pull_request only, concurrency cancel-in-progress): gitleaks, ruff, mypy, `pytest -m unit`. uv cache on. No LLM calls, no image push, no `secrets.` refs.
 - **Abuse controls (public link)**: per-IP sliding-window rate limit, global daily USD cap (demo pauses with a message and a reset time), vendor-side hard spend limits on every key, exact-match cache, `max_tokens` caps. Admin token required for /approve.
@@ -256,6 +295,8 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
 | Jira down | draft kept, action retryable, admin notified |
 | Postgres down | app returns 503; no partial writes (transactions) |
 | Corpus changed | nightly re-index; corpus_version bumps; cache invalidated |
+
+**As built (session B)**: strong model down (the proxy falls back to gpt-4o, then to the `fast` group; if everything fails, 503 `model_unavailable` with the request `failed` and the allowance refunded; the fallbacks were verified live by forcing the primaries to fail); fabricated citation (retry, then fail closed); user over budget (429 with `Retry-After`; daily cap 503 with `resets_at`). Retrieval finding nothing abstains without an answer call, but not at exactly $0: the router call comes before retrieval (about $0.00003). Not built yet: Jira, the Postgres-down 503, corpus-change invalidation beyond the `CORPUS_VERSION` setting.
 
 ---
 

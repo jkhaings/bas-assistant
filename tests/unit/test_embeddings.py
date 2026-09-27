@@ -20,13 +20,15 @@ def _settings() -> Settings:
         admin_token=SecretStr("test"),
         grafana_admin_password=SecretStr("test"),
         postgres_password=SecretStr("test"),
+        litellm_api_key=SecretStr("virtual-key-test"),
     )
 
 
 def test_embed_returns_vectors_tokens_and_cost() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/embeddings"
-        assert request.headers["authorization"] == "Bearer sk-test"
+        assert request.headers["authorization"] == "Bearer virtual-key-test"
+        assert request.url.host == "litellm"
         return httpx.Response(
             200,
             json={
@@ -50,3 +52,16 @@ def test_embed_raises_on_an_http_error() -> None:
 
     with pytest.raises(httpx.HTTPStatusError):
         embedder.embed(["hello"])
+
+
+def test_embed_cost_comes_from_the_proxy_when_it_reports_one() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [{"embedding": [0.1]}], "usage": {"total_tokens": 7}},
+            headers={"x-litellm-response-cost": "0.00000014"},
+        )
+
+    embedder = OpenAIEmbedder(_settings(), transport=httpx.MockTransport(handler))
+
+    assert embedder.embed(["hello"]).usd == Decimal("0.00000014")

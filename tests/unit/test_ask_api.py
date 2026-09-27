@@ -1,4 +1,4 @@
-"""Behaviour: POST /ask returns citations or abstains, ACL-filtered, and records the request."""
+"""Behaviour: POST /search returns citations or abstains, ACL-filtered, and records the request."""
 
 import uuid
 from collections.abc import Iterator
@@ -88,7 +88,7 @@ def client(db_session: Session) -> Iterator[TestClient]:
 
 def test_ask_returns_citations_for_a_matching_question(client: TestClient) -> None:
     response = client.post(
-        "/ask", json={"question": "power draw"}, headers={"X-Demo-Role": "support"}
+        "/search", json={"question": "power draw"}, headers={"X-Demo-Role": "support"}
     )
 
     assert response.status_code == 200
@@ -100,7 +100,9 @@ def test_ask_returns_citations_for_a_matching_question(client: TestClient) -> No
 
 def test_ask_abstains_for_an_unmatched_question(client: TestClient) -> None:
     response = client.post(
-        "/ask", json={"question": "unrelated gibberish xyzzy"}, headers={"X-Demo-Role": "support"}
+        "/search",
+        json={"question": "unrelated gibberish xyzzy"},
+        headers={"X-Demo-Role": "support"},
     )
 
     assert response.status_code == 200
@@ -111,7 +113,7 @@ def test_ask_abstains_for_an_unmatched_question(client: TestClient) -> None:
 
 def test_support_role_cannot_see_engineer_only_chunk(client: TestClient) -> None:
     response = client.post(
-        "/ask", json={"question": "wiring diagram detail"}, headers={"X-Demo-Role": "support"}
+        "/search", json={"question": "wiring diagram detail"}, headers={"X-Demo-Role": "support"}
     )
 
     assert response.json()["abstained"] is True
@@ -119,21 +121,21 @@ def test_support_role_cannot_see_engineer_only_chunk(client: TestClient) -> None
 
 def test_engineer_role_sees_engineer_only_chunk(client: TestClient) -> None:
     response = client.post(
-        "/ask", json={"question": "wiring diagram detail"}, headers={"X-Demo-Role": "engineer"}
+        "/search", json={"question": "wiring diagram detail"}, headers={"X-Demo-Role": "engineer"}
     )
 
     assert response.json()["abstained"] is False
 
 
 def test_missing_role_header_defaults_to_support(client: TestClient) -> None:
-    response = client.post("/ask", json={"question": "power draw"})
+    response = client.post("/search", json={"question": "power draw"})
 
     assert response.status_code == 200
 
 
 def test_unknown_role_header_is_rejected(client: TestClient) -> None:
     response = client.post(
-        "/ask", json={"question": "power draw"}, headers={"X-Demo-Role": "hacker"}
+        "/search", json={"question": "power draw"}, headers={"X-Demo-Role": "hacker"}
     )
 
     assert response.status_code == 422
@@ -141,7 +143,7 @@ def test_unknown_role_header_is_rejected(client: TestClient) -> None:
 
 def test_ask_records_a_request_row(client: TestClient, db_session: Session) -> None:
     response = client.post(
-        "/ask", json={"question": "power draw"}, headers={"X-Demo-Role": "support"}
+        "/search", json={"question": "power draw"}, headers={"X-Demo-Role": "support"}
     )
     request_id = uuid.UUID(response.json()["request_id"])
 
@@ -153,7 +155,7 @@ def test_ask_records_a_request_row(client: TestClient, db_session: Session) -> N
 
 def test_ask_never_logs_the_raw_question(client: TestClient, db_session: Session) -> None:
     response = client.post(
-        "/ask",
+        "/search",
         json={"question": "contact jason@example.com about the power draw"},
         headers={"X-Demo-Role": "support"},
     )
