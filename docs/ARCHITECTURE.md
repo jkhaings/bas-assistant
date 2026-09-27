@@ -1,12 +1,12 @@
 # bas-assistant: design document
 
-Stack locked (Sep 26, final weekend scope): FastAPI + Pydantic v2 · Postgres 16 + pgvector + tsvector · Redis · Docling (pypdfium2 fallback — already a Docling dependency, avoids adding AGPL PyMuPDF) · LlamaIndex (ingestion) · OpenAI text-embedding-3-small · local MiniLM cross-encoder reranker (bge-reranker-base until session D, ADR 0003) · LiteLLM gateway · GPT-4o-mini → Gemini Flash (fast tier), Claude Sonnet → GPT-4o (strong tier) · LangGraph + Postgres checkpointer + `interrupt` human gate (internal ticket table, no Jira) · guardrails as code: Presidio in/out, injection rail, output validator · "View as" role switcher (no login), admin token for /approve · Langfuse (OTel) · RAGAS + pytest golden set + red-team pytest · Prometheus + Grafana (Budget; Quality & adoption; embedded in the app) · React + TypeScript (Vite) · Docker Compose on the DigitalOcean droplet, Caddy, Cloudflare DNS at bas.jasonkhaings.com · GitHub Actions (one job, PR only, no LLM calls).
+Stack locked (Sep 26, final weekend scope): FastAPI + Pydantic v2 · Postgres 16 + pgvector + tsvector · Redis · Docling (pypdfium2 fallback — already a Docling dependency, avoids adding AGPL PyMuPDF) · LlamaIndex (ingestion) · OpenAI text-embedding-3-small · local MiniLM cross-encoder reranker (bge-reranker-base until session D, ADR 0003) · LiteLLM gateway · GPT-4o-mini → Gemini Flash (fast tier), Claude Sonnet → GPT-4o (strong tier) · LangGraph + Postgres checkpointer + `interrupt` human gate (internal ticket table, no Jira) · guardrails as code: Presidio in/out, injection rail, output validator · "View as" role switcher (no login), admin token for /approve · Langfuse (OTel) · RAGAS + pytest golden set + red-team pytest · Prometheus + Grafana (Budget; Quality & adoption; embedded in the app) · React + TypeScript (Vite) · Docker Compose on the DigitalOcean droplet, Caddy, Route 53 DNS at bas.jasonkhaings.com · GitHub Actions (one job, PR only, no LLM calls).
 
 Deferred until after the technical round: Slack, n8n, MCP server, Jira, Prefect (ingest is `make ingest`), Cohere, Ollama, promptfoo, LangSmith, k6, MkDocs, Azure/Terraform, Entra ID, Chroma, Guardrails AI library. Sections below that mention these describe the production path, not this weekend's build.
 
 Two interfaces: the web app (product demo; "How I built this" page added last) and Grafana (Budget dashboard, Quality & adoption dashboard). Everything else is a channel into the API.
 
-Deployment decision (Sep 26): public demo link, no login. Hosted with Docker Compose on a DigitalOcean droplet behind Caddy (auto-TLS), Cloudflare DNS on a jasonkhaings.com subdomain (suggest `bas.` or `assistant.`, not `delta.`). Roles are a demo switcher in the UI ("View as: Support / Engineer / Admin"); the Approve action alone requires a shared admin token. OIDC/JWT/Entra and Azure/Terraform move to an optional stretch session. Public exposure makes abuse controls load-bearing: per-IP rate limit, global daily USD cap that pauses the demo with a friendly message, vendor-side hard spend limits, cache.
+Deployment decision (Sep 26): public demo link, no login. Hosted with Docker Compose on a DigitalOcean droplet behind Caddy (auto-TLS), Route 53 DNS on the jasonkhaings.com subdomain `bas.` (an A record with no proxy; Cloudflare was the original plan). Roles are a demo switcher in the UI ("View as: Support / Engineer / Admin"); the Approve action alone requires a shared admin token. OIDC/JWT/Entra and Azure/Terraform move to an optional stretch session. Public exposure makes abuse controls load-bearing: per-IP rate limit, global daily USD cap that pauses the demo with a friendly message, vendor-side hard spend limits, cache.
 
 This file becomes `docs/ARCHITECTURE.md` in the repo. Keep it current-state truthful as things ship.
 
@@ -183,6 +183,26 @@ The reranker is the only non-trivial cost in retrieval, and it runs on CPU. Meas
 
 Since session D, any error in `/ask` or `/ask/stream` closes the request as `failed` (and refunds the allowance) before the error propagates, so crashes show up in metrics and on the dashboards. Before, only gateway failures did.
 
+**As built (session E)**:
+- **Corpus version in the cache key.** `db/corpus.current_corpus_version` returns
+  `"{CORPUS_VERSION}.{count(documents)}.{max(ingested_at)}"`. `CORPUS_VERSION` ("2") is now only
+  the retrieval part, bumped by hand when retrieval changes. The rest moves with every ingest that
+  changes the corpus: a changed document is re-inserted with a fresh `ingested_at`, and a new or
+  removed one changes the count. An ingest that changes nothing leaves it, and the cache, alone.
+  - `open_turn` reads it once per first question, from Postgres, because ingest runs in its own
+    process. The key goes on `OpenTurn`, and `close_turn` stores the answer under that same key,
+    even if an ingest lands mid-turn.
+  - This closes the hotfix's gap: abstains cached while the corpus was empty are no longer served
+    after the first ingest.
+  - The golden, live-graph and red-team suites, and `ragas_run.py`, compute and record the same
+    version.
+- **Tried and reverted: at most two passages per document in the final five.** The protocol rows'
+  RAGAS faithfulness stayed at 0.111 (22/22 golden either way). Their top five never held more
+  than two passages from one document. Sibling products' catalog sheets crowd them: separate
+  documents with near-identical sections, such as Red5 EDGE 1146 and Red5-PLUS-1180 beside
+  Red5-PLUS-1146, or eZFC, eZVP and eZV ranked above eZNS. Deduplicating identical sections across
+  documents is the next thing to try (Known gaps in `outputs/HANDOFF_E.md`).
+
 **Deferred**: API keys for Slack / n8n / MCP (post-weekend).
 
 ---
@@ -292,14 +312,16 @@ Since the session B merge this holds for embeddings too: session A's `EmbeddingP
 - **Gateway**: `src/bas_assistant/llm/gateway.py` calls the LiteLLM proxy over HTTP by alias; no vendor SDK in the app. `config/litellm.yaml`: `fast` = gpt-4o-mini → `fast-fallback` gemini-3.8-flash (`reasoning_effort: low`); `strong` = claude-sonnet-4-6 → `strong-fallback` gpt-4o → the `fast` group; `embed` = text-embedding-3-small. `num_retries: 0` (the fallback is the retry) and a 30 s timeout per attempt; the app's HTTP timeout is 130 s, longer than the proxy's worst case (four 30 s attempts if `fast`'s own fallback also applies). gemini-2.0-flash (in the original plan) and 2.5-flash return 404 (retired); verified live Sep 26. `tests/eval` also calls the `fast-fallback` and `strong-fallback` groups directly (still through the proxy), the one exception to the three-alias rule, so a retired fallback shows up before the day a primary fails.
 - **Numbers**: each `usage` row takes model and provider from the `x-litellm-model-id` header (deployment id `<provider>/<model>`, so a fallback is attributed to the model that answered), USD from `x-litellm-response-cost`, tokens from the response body. A cache hit writes one $0 row with model `cache`.
 - **Receipt**: `GET /requests/{id}/receipt` → route, model, tokens, usd, retrieval_ms, rerank_ms, model_ms, total_ms, cache_hit, and one line per call, so router cost is visible separately.
-- **Controls built**: (1) virtual keys `dev` ($5 / 30 days) and `service` ($2 / 30 days), registered by `make litellm-keys`; the per-channel keys wait for those channels. (2) Allowance of 50 questions per user per UTC day (per role in the demo; cache hits are free), refunded only when the models are unavailable; global daily cap `DAILY_USD_CAP` (default $3) → 503. (3) `max_tokens` 60 for the router, 700 for the answer; 6 turns of history. (4) Exact-match cache, 24 h TTL, key = normalized question + role + `CORPUS_VERSION`. (5) Prompt caching is configured on the Claude deployment (`cache_control_injection_points`) but inactive: the system prompt is about 300 tokens, under Anthropic's 1,024-token minimum, and live receipts show `cached_tokens` 0. (6) Routing.
+- **Controls built**: (1) virtual keys `dev` ($5 / 30 days) and `service` ($2 / 30 days), registered by `make litellm-keys`; the per-channel keys wait for those channels. (2) Allowance of 50 questions per user per UTC day (per role in the demo; cache hits are free), refunded only when the models are unavailable; global daily cap `DAILY_USD_CAP` (default $3) → 503. (3) `max_tokens` 60 for the router, 700 for the answer; 6 turns of history. (4) Exact-match cache, 24 h TTL, key = normalized question + role + corpus version + prompt version (since session E the corpus version is read from the documents table, §4). (5) Prompt caching is configured on the Claude deployment (`cache_control_injection_points`) but inactive: the system prompt is about 300 tokens, under Anthropic's 1,024-token minimum, and live receipts show `cached_tokens` 0. (6) Routing.
 - LiteLLM also logs every call with its cost in `LiteLLM_SpendLogs` (database `litellm`).
 
 Since session C, a LiteLLM key-budget refusal (429, error type `budget_exceeded`, checked live with a `max_budget: 0` key) raises `KeyBudgetError` and returns 429 `key_budget_reached`. The allowance is refunded. RAGAS judge calls are written as `usage` rows with stage `judge` and no request id, so the daily cap counts them.
 
 **Reporting as built (session D)**: the Budget dashboard (§11) reads `usage`, `requests` and `budgets` through the `dash_*` views: spend today against the enforced cap, month-to-date against the $5 key budget with a linear month-end projection, cost per answer, cost by model and stage, cost per user and team, cache hit rate, and USD per hour by model from Prometheus. Alerts fire at 50, 80 and 100% of the daily cap.
 
-**Deferred**: `docs/cost-model.md` (E); per-request ($0.10) and hourly-spike cost alerts; per-team budgets (the Budget dashboard groups by `users.team`, but every demo user is team `default`).
+**As built (session E)**: `GET /budget` returns `{spent_usd, cap_usd, resets_at}` (today's UTC spend from `usage` against `DAILY_USD_CAP`) for the web app's budget chip. The measured cost per simple and complex answer is in the README's numbers, from the live golden run.
+
+**Deferred**: `docs/cost-model.md` (the README carries the measured numbers instead); per-request ($0.10) and hourly-spike cost alerts; per-team budgets (the Budget dashboard groups by `users.team`, but every demo user is team `default`).
 
 ---
 
@@ -364,7 +386,7 @@ locations and tests, and the OWASP LLM Top 10 (2025) mapping.
   - Five alert rules: API 5xx share above 5%, p95 answer latency above 8 s, and daily spend at 50, 80 and 100% of the cap. The error-rate rule also counts the daily-cap 503, so a tripped cap fires it alongside the 100% rule. `bas_requests_total` counts a request when it first closes, so a gated request stays `paused` there; `/approve` updates only the row, which the Postgres panels read.
 - **Logs**: every JSON line carries the OTel `trace_id` when a span is active, and request logs carry `request_id`, so a log line leads to its trace. No question text is logged.
 
-**Deferred**: an alert contact point (alerts show in Grafana's alerting page only); Langfuse on the droplet (drop order #2, decided in session E); the tool-call metric (the only tool is the ticket, counted by `bas_tickets_total`); the validation-failure-rate alert (the failures counter and panel exist). Session E's Caddy must not route `/metrics` or Langfuse publicly without auth.
+**Deferred**: an alert contact point (alerts show in Grafana's alerting page only); Langfuse on the droplet (drop order #2, decided in session E: its services sit behind the compose profile `langfuse`, off unless `COMPOSE_PROFILES=langfuse`, and `docker-compose.prod.yml` leaves it out); the tool-call metric (the only tool is the ticket, counted by `bas_tickets_total`); the validation-failure-rate alert (the failures counter and panel exist). Session E's Caddy answers `/metrics` with 404 and has no Langfuse route.
 
 ---
 
@@ -439,7 +461,45 @@ The RAGAS-faithfulness proxy on sampled production answers is not built.
 
 Two interfaces people look at:
 
-1. **The product (web app)**: React + TypeScript. No login (role switcher), threads, streaming answers, citation cards, feedback buttons, a "Show cost" receipt on every answer (route, model, tokens, cost, timings, cache hit), approvals page for admins, and a Dashboards tab that embeds the two Grafana dashboards same-origin. This is the demo. A "How I built this" page is added at the very end (not yet; placeholder route only).
+1. **The product (web app)**: React + TypeScript. No login (role switcher), threads, streaming answers, citation cards, feedback buttons, a "Show cost" receipt on every answer (route, model, tokens, cost, timings, cache hit), approvals page for admins, and a Dashboards tab that embeds the two Grafana dashboards same-origin. This is the demo, with a "How I built this" page.
+
+   **As built (session E)**, `web/`:
+   - **Stack**: Vite, React 19, strict TypeScript and Tailwind v4 (ADR 0002). The typed client
+     is `openapi-fetch` over `src/api/schema.d.ts`, which `npm run gen:api` generates from
+     `app.openapi()`; the generated file is committed.
+   - **Serving**: FastAPI serves `web/dist` at `/`, mounted after every API route
+     (`main.create_app`), and the Dockerfile's `web` stage builds it into the image.
+     - The API stays at root paths, not under `/api` as SESSIONS.md planned. The generated client's
+       paths then match the schema 1:1.
+     - The UI routes by URL hash (`#/chat`, `#/approvals`, `#/dashboards`, `#/evals`,
+       `#/how-i-built-this`), so no page path can collide with an API path.
+     - The Vite dev server proxies the API paths to :8000 and `/grafana` to :3000.
+   - **Top bar**:
+     - The "View as" select sends `X-Demo-Role` on every request, with the note "roles come from
+       SSO in production". Each role keeps its own threads, since the API 404s another role's
+       thread.
+     - A budget chip from `GET /budget`, polled every 30 s and after each answer.
+     - The count of documents the role can see (`GET /documents`).
+     - A banner whenever any call returns 503 `daily_budget_reached`.
+   - **Chat**:
+     - `POST /ask/stream` is read with `fetch` and `eventsource-parser`, because `EventSource`
+       cannot POST. It shows the node steps as they finish, then the answer as plain text, never
+       rendered markdown or HTML.
+     - Citation cards: document, page and link; PDF links open at `#page=N`.
+     - A three-way feedback control, flag-with-reason, and "Show cost", which fetches the receipt.
+     - A paused turn shows the ticket waiting for an admin.
+     - Limit errors show the API's own message; HTTP errors arrive wrapped in `detail`, the SSE
+       `error` event bare.
+   - **Approvals**: admin only. The admin token is asked once and kept in React state, never in
+     browser storage. It lists `GET /tickets` and sends approve or deny through `POST /approve`;
+     a 401 clears the token.
+   - **Dashboards**: both Grafana dashboards in same-origin iframes (`/grafana/d/…?kiosk`).
+   - **Evals**: golden pass rate, RAGAS by category and red-team cases from `GET /evals/latest`,
+     with a plain-words paragraph per metric.
+   - **How I built this**: a long-form page written from the live run's numbers.
+   - **Tests**: Vitest and Testing Library with a stubbed `fetch`, covering chat streaming,
+     citations, the receipt, the role switch, the approval flow, the budget banner and error text.
+     CI runs `npm test` and `npm run build`.
 2. **The dashboard (Grafana)**: two dashboards, one Grafana, embedded in the app's Dashboards tab and also reachable at /grafana. Data sources: Prometheus (live ops) and Postgres directly (business numbers).
    - **Budget**: spend today, month-to-date vs budget, cost per answer, cost by model and by stage (router / embed / answer), cost per user and per team, cache hit rate, projected month-end, budget thresholds drawn on the panels.
    - **Quality and adoption**: weekly active users, questions per user, abstain rate, refusal rate, validation failures, p95 latency, ticket escalation rate, and the two letter numbers: used-without-edits % and flagged-wrong %.
@@ -484,8 +544,33 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
   log reached 33 GB and filled the 58 GB Docker disk.
 
   Ollama and n8n are not in compose.
-- **Public demo**: the same Compose file (production profile: no Ollama if the droplet is small, Langfuse optional) on a DigitalOcean droplet. Caddy reverse proxy with auto-TLS: `/` → web app + API, `/grafana` → Grafana with anonymous Viewer access limited to the two dashboards. Cloudflare DNS A record on the jasonkhaings.com subdomain. Secrets in the droplet's env file only. `deploy/deploy.sh` pulls the tagged image and restarts.
-- **CI**: one GitHub Actions workflow, one job (pull_request only, concurrency cancel-in-progress): gitleaks, ruff, mypy, `pytest -m unit`. uv cache on. No LLM calls, no image push, no `secrets.` refs.
+- **Public demo, as built (session E)**: https://bas.jasonkhaings.com on a DigitalOcean droplet
+  (Ubuntu 24.04, 2 vCPU, 4 GB RAM plus a 2 GB swap file, x86_64). DNS is a Route 53 A record with
+  no proxy; Caddy obtains the Let's Encrypt certificate itself.
+  - `deploy/setup_server.sh` (once, as root): Docker CE and the compose plugin, ufw allowing 22, 80
+    and 443 only, unattended upgrades, the swap file, `/opt/bas-assistant`, and
+    `/etc/bas-assistant.env` (mode 600) with every secret generated except the three vendor keys,
+    which a person pastes. `/opt/bas-assistant/.env` and `/root/.bas-assistant.env` link to it; it
+    also sets `COMPOSE_FILE=docker-compose.prod.yml`, so plain `docker compose` and `make ingest`
+    act on the prod stack.
+  - `docker-compose.prod.yml`: app, migrate, Postgres, Redis (with a volume), LiteLLM, Prometheus,
+    Grafana and Caddy; no Langfuse. Only Caddy publishes ports (80, 443). Postgres, Redis, LiteLLM
+    and the app bind to 127.0.0.1 for the on-droplet eval runs, because Docker-published ports
+    bypass ufw. Grafana gets its two passwords and its public `root_url` by interpolation, never
+    the env file. Logs are capped as in dev. The network has a fixed subnet, and the app sets
+    `FORWARDED_ALLOW_IPS` to it: uvicorn then keys the per-IP limit on the visitor's address from
+    Caddy's `X-Forwarded-For`, not on Caddy.
+  - `deploy/Caddyfile`: `/metrics*` → 404, `/grafana*` → Grafana (sub-path kept), everything else →
+    the app, which serves the API and the web build. HSTS and nosniff headers.
+  - `deploy/deploy.sh <ssh-target> [git-ref]` runs on the laptop. The droplet cannot read the
+    private repo and the branch is pushed once, so it sends `git archive` of a committed ref, plus
+    the crawl cache in `data/raw`. On the droplet it builds the image (`bas-assistant-app:prod`,
+    also tagged with the short sha), runs migrations, sets the `grafana_reader` password before
+    Grafana starts, starts the stack, registers the LiteLLM virtual keys, and writes `REVISION`.
+    With an empty corpus it stops before Caddy, so the link opens only after `make ingest`. Then it
+    starts Caddy and smoke-tests `/healthz` and one `/ask` over HTTPS. Rolling back is deploying
+    the previous ref.
+- **CI**: one GitHub Actions workflow, one job (pull_request only, concurrency cancel-in-progress): gitleaks, ruff, mypy, `pytest -m unit`, then `npm ci`, `npm test` and `npm run build` in `web/` (session E). uv and npm caches on. No LLM calls, no image push, no `secrets.` refs.
 - **Abuse controls (public link)**: per-IP sliding-window rate limit, global daily USD cap (demo pauses with a message and a reset time), vendor-side hard spend limits on every key, exact-match cache, `max_tokens` caps. Admin token required for /approve.
 - **Stretch (optional session)**: Terraform → Azure Container Apps + Key Vault + App Insights, Entra ID OIDC login replacing the role switcher. Adds the Microsoft names to the story; not needed for the demo link.
 
@@ -504,7 +589,7 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
 | Postgres down | app returns 503; no partial writes (transactions) |
 | Corpus changed | nightly re-index; corpus_version bumps; cache invalidated |
 
-**As built (session B)**: strong model down (the proxy falls back to gpt-4o, then to the `fast` group; if everything fails, 503 `model_unavailable` with the request `failed` and the allowance refunded; the fallbacks were verified live by forcing the primaries to fail); fabricated citation (retry, then fail closed); user over budget (429 with `Retry-After`; daily cap 503 with `resets_at`). Session C: virtual-key budget spent → 429 `key_budget_reached`, request `failed`, allowance refunded; a crawl fetch that fails is retried with backoff, then skipped with its URL logged. Retrieval finding nothing abstains without an answer call, but not at exactly $0: the router call comes before retrieval (about $0.00003). Not built yet: Jira, the Postgres-down 503, corpus-change invalidation beyond the `CORPUS_VERSION` setting.
+**As built (session B)**: strong model down (the proxy falls back to gpt-4o, then to the `fast` group; if everything fails, 503 `model_unavailable` with the request `failed` and the allowance refunded; the fallbacks were verified live by forcing the primaries to fail); fabricated citation (retry, then fail closed); user over budget (429 with `Retry-After`; daily cap 503 with `resets_at`). Session C: virtual-key budget spent → 429 `key_budget_reached`, request `failed`, allowance refunded; a crawl fetch that fails is retried with backoff, then skipped with its URL logged. Retrieval finding nothing abstains without an answer call, but not at exactly $0: the router call comes before retrieval (about $0.00003). Not built yet: Jira and the Postgres-down 503. Session E: a corpus change invalidates cached answers, because the cache key carries a version read from the documents table (§4).
 
 ---
 

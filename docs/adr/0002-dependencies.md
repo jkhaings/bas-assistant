@@ -50,6 +50,23 @@ Running log — add a line whenever a new dependency is added to pyproject.toml.
 | langchain-openai | — | The OpenAI-compatible client RAGAS judges through. It is pointed at the LiteLLM proxy's `fast` and `embed` aliases with the app's virtual key, so no vendor endpoint or vendor key is involved. An httpx hook meters each call as a `judge` usage row. Dev only (session C) |
 | langchain-community | — | Pinned to >=0.4,<0.4.2, not used directly. ragas 0.4.3 imports `langchain_community.chat_models.vertexai`, which 0.4.2 removed, so an unpinned lock breaks `import ragas` (caught by the reviewer; `tests/unit/test_scoring.py` now imports the runner so CI catches it) (session C) |
 
+## Web (`web/package.json`, session E)
+
+The browser has no stdlib to beat, so each row says what it replaces instead: hand-written code,
+or a heavier library. No router, state library, UI kit or request mocking library.
+
+| Package | Runtime / dev | Instead of | Reason |
+|---|---|---|---|
+| react, react-dom | runtime | — | The UI (SESSIONS.md stack) |
+| openapi-fetch | runtime | hand-written `fetch` wrappers per route | Typed calls from the generated OpenAPI types, about 6 kB |
+| eventsource-parser | runtime | a hand-rolled SSE parser | `/ask/stream` is POST, so the browser's `EventSource` cannot be used; this parses the `fetch` body stream |
+| openapi-typescript | dev | hand-copied TS types | Generates `src/api/schema.d.ts` from `app.openapi()` (`npm run gen:api`); pinned TypeScript to 5.9 because it accepts ^5 only |
+| vite, @vitejs/plugin-react | dev | webpack | Dev server with the API and `/grafana` proxy, production build |
+| typescript | dev | — | Strict mode, `noUncheckedIndexedAccess` |
+| tailwindcss, @tailwindcss/vite | dev | hand-written CSS | SESSIONS.md stack |
+| vitest, jsdom | dev | jest | Shares Vite's config and transforms |
+| @testing-library/react, user-event, jest-dom | dev | enzyme | Tests what the user sees and does, not component internals |
+
 ## Notes
 
 - `httpx` moved from the dev group to runtime dependencies in session A (still doubles as the

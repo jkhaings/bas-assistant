@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1
 
+# --- web stage: the React build FastAPI serves at / ---
+FROM node:24-slim AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
+COPY web/ ./
+RUN npm run build
+
 # --- build stage ---
 # astral-sh only publishes the combined <uv-version>-python<py>-<os> tag up to
 # uv 0.9.x; from 0.10 on, the documented pattern is to copy the uv binary
@@ -48,6 +56,7 @@ USER app
 COPY --from=build --chown=app:app /app/.venv .venv
 COPY --from=build --chown=app:app /app/src src
 COPY --from=build --chown=app:app /app/alembic.ini ./
+COPY --from=web --chown=app:app /web/dist web/dist
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
