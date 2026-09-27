@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections import Counter
 from dataclasses import dataclass
 
 from pydantic import BaseModel
@@ -21,9 +20,6 @@ from bas_assistant.retrieval.store import VectorStore
 # scores it best of all. MiniLM keeps 20 pairs under the 3 s budget (docs/adr/0003-reranker.md).
 FUSED_TOP_N = 20
 FINAL_TOP_N = 5
-# Sections of one catalog sheet can fill all five places and leave the answer model one source
-# to read; two per document leaves room for the others.
-MAX_PASSAGES_PER_DOCUMENT = 2
 
 
 class RetrievedChunk(BaseModel):
@@ -114,22 +110,6 @@ def _best_child_per_parent(
     return best
 
 
-def _top_parents(
-    best_per_parent: dict[uuid.UUID, tuple[Chunk, float]],
-) -> list[tuple[Chunk, float]]:
-    """The best-scoring parents, at most MAX_PASSAGES_PER_DOCUMENT from any one document."""
-    per_document: Counter[uuid.UUID] = Counter()
-    top: list[tuple[Chunk, float]] = []
-    for chunk, score in sorted(best_per_parent.values(), key=lambda item: item[1], reverse=True):
-        if per_document[chunk.document_id] == MAX_PASSAGES_PER_DOCUMENT:
-            continue
-        per_document[chunk.document_id] += 1
-        top.append((chunk, score))
-        if len(top) == FINAL_TOP_N:
-            break
-    return top
-
-
 def _citation(parent: Parent, chunk: Chunk, score: float) -> Citation:
     return Citation(
         chunk_id=chunk.id,
@@ -150,7 +130,8 @@ def _select_citations(
     acl_groups: list[str],
 ) -> tuple[list[Citation], bool]:
     """Top-5 parents by best child score; abstain if even the best is below threshold."""
-    top = _top_parents(_best_child_per_parent(candidates, scores))
+    best_per_parent = _best_child_per_parent(candidates, scores)
+    top = sorted(best_per_parent.values(), key=lambda item: item[1], reverse=True)[:FINAL_TOP_N]
     if not top or top[0][1] < threshold:
         return [], True
     parent_ids = [chunk.parent_id for chunk, _ in top]
