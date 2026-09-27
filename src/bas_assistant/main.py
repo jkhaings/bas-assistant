@@ -1,16 +1,23 @@
-"""FastAPI application: /healthz, the agent routes, the cost receipt, search and documents."""
+"""FastAPI application: /healthz, /metrics, the agent routes, the cost receipt, feedback,
+search and documents."""
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from functools import partial
 
 from fastapi import FastAPI
+from opentelemetry import trace
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 
 from bas_assistant.agent import api as agent_api
 from bas_assistant.agent.corpus import search_corpus
 from bas_assistant.api import ask, documents
 from bas_assistant.cost import api as cost_api
+from bas_assistant.cost.budget import sync_daily_cap
+from bas_assistant.feedback import api as feedback_api
+from bas_assistant.observability.metrics import count_http_requests, metrics_endpoint
+from bas_assistant.observability.tracing import drop_client_details, langfuse_provider
 from bas_assistant.retrieval.embeddings import OpenAIEmbedder
 from bas_assistant.retrieval.rerank import load_reranker
 from bas_assistant.runtime import open_runtime
@@ -33,10 +40,21 @@ def healthz() -> Health:
 def create_app(lifespan: Lifespan) -> FastAPI:
     app = FastAPI(title="bas-assistant", docs_url="/docs", redoc_url=None, lifespan=lifespan)
     app.add_api_route("/healthz", healthz, methods=["GET"], response_model=Health)
+    app.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
     app.include_router(agent_api.router)
     app.include_router(cost_api.router)
+    app.include_router(feedback_api.router)
     app.include_router(ask.router)
     app.include_router(documents.router)
+    app.middleware("http")(count_http_requests)
+    # One root span per API request; where spans go is decided at startup (langfuse_provider).
+    # The ASGI send/receive spans (one per SSE event) would bury the graph's own spans.
+    FastAPIInstrumentor.instrument_app(
+        app,
+        excluded_urls="healthz,metrics",
+        exclude_spans=["send", "receive"],
+        server_request_hook=drop_client_details,
+    )
     return app
 
 
@@ -45,10 +63,18 @@ async def _serve(app: FastAPI) -> AsyncGenerator[None]:
     settings = Settings()
     # Loaded before the app reports healthy, so no request pays for loading the model.
     load_reranker(settings.rerank_model)
+    tracing = langfuse_provider(settings)
+    if tracing is not None:
+        trace.set_tracer_provider(tracing)
     retrieve = partial(search_corpus, OpenAIEmbedder(settings), settings)
-    with open_runtime(settings, retrieve) as runtime:
-        app.state.runtime = runtime
-        yield
+    try:
+        with open_runtime(settings, retrieve) as runtime:
+            sync_daily_cap(runtime.agent.engine, settings.daily_usd_cap)
+            app.state.runtime = runtime
+            yield
+    finally:
+        if tracing is not None:
+            tracing.shutdown()  # flushes spans still in the batch
 
 
 app = create_app(_serve)

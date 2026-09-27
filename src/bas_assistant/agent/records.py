@@ -11,6 +11,7 @@ from sqlalchemy import Engine, insert, select, update
 
 from bas_assistant.agent.state import Passage, TicketDraft, UserContext
 from bas_assistant.db.activity import Request, RequestChunk, Thread, Ticket, User
+from bas_assistant.observability.metrics import TICKETS, observe_request
 
 TicketStatus = Literal["proposed", "approved", "rejected", "filed"]
 
@@ -69,8 +70,10 @@ class RequestOutcome:
 
 
 def close_request(engine: Engine, request_id: UUID, outcome: RequestOutcome) -> None:
+    """Every request closes here (graph, cache hit, or outage), so it is also counted here."""
     with engine.begin() as conn:
         conn.execute(update(Request).where(Request.id == request_id).values(asdict(outcome)))
+    observe_request(outcome.route, outcome.decision, outcome.latency_ms)
 
 
 def set_request_decision(engine: Engine, request_id: UUID, decision: str) -> None:
@@ -110,6 +113,7 @@ def insert_ticket(engine: Engine, request_id: UUID, draft: TicketDraft) -> UUID:
                 created_at=datetime.now(UTC),
             )
         )
+    TICKETS.labels("proposed").inc()
     return ticket_id
 
 
@@ -122,6 +126,7 @@ def set_ticket_status(
             .where(Ticket.id == ticket_id)
             .values(status=status, approver_id=approver_id)
         )
+    TICKETS.labels(status).inc()
 
 
 class TicketOut(BaseModel):

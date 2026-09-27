@@ -7,6 +7,7 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 
 pytestmark = pytest.mark.unit
 
@@ -50,3 +51,32 @@ def test_log_line_is_json_with_keys_and_emails_redacted() -> None:
     assert key not in record["message"], "key leaked into log"
     assert "user@example.com" not in record["message"], "email leaked into log"
     assert "[REDACTED]" in record["message"]
+
+
+def _format(record: logging.LogRecord) -> dict[str, object]:
+    import bas_assistant.logging as log_mod  # noqa: PLC0415
+
+    formatted: dict[str, object] = json.loads(log_mod.JsonFormatter().format(record))
+    return formatted
+
+
+def test_log_line_carries_the_request_id_it_was_given() -> None:
+    record = logging.makeLogRecord(
+        {"msg": "request closed", "levelno": logging.INFO, "request_id": "req-123"}
+    )
+
+    assert _format(record)["request_id"] == "req-123"
+
+
+def test_log_line_inside_a_span_carries_the_trace_id() -> None:
+    tracer = TracerProvider().get_tracer("test")
+    with tracer.start_as_current_span("request") as span:
+        payload = _format(logging.makeLogRecord({"msg": "inside", "levelno": logging.INFO}))
+
+    assert payload["trace_id"] == format(span.get_span_context().trace_id, "032x")
+
+
+def test_log_line_outside_a_span_has_no_trace_id() -> None:
+    payload = _format(logging.makeLogRecord({"msg": "outside", "levelno": logging.INFO}))
+
+    assert "trace_id" not in payload

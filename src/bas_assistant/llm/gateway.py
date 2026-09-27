@@ -12,6 +12,8 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel
 
+from bas_assistant.observability.tracing import record_generation, tracer
+
 Alias = Literal["fast", "strong", "embed"]
 
 
@@ -99,6 +101,15 @@ def complete(
             },
         },
     }
-    response, latency_ms = _post(client, "/v1/chat/completions", body)
+    with tracer.start_as_current_span(f"llm {alias}") as span:
+        response, latency_ms = _post(client, "/v1/chat/completions", body)
+        usage = _usage(alias, response, latency_ms)
+        record_generation(
+            span,
+            model=usage.model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            usd=usage.usd,
+        )
     content = response.json()["choices"][0]["message"]["content"] or ""
-    return Completion(content=content, usage=_usage(alias, response, latency_ms))
+    return Completion(content=content, usage=usage)

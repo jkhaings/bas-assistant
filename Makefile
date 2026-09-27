@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: help up down test test-int lint format check-env preflight ingest eval redteam \
-        litellm-keys litellm-secrets
+        litellm-keys litellm-secrets observability-secrets grafana-db-user
 
 PYTHON  := uv run python
 PYTEST  := uv run pytest
@@ -11,10 +11,15 @@ ALEMBIC := uv run alembic
 # ── required env variable names (values never printed) ──────────────────────
 # Proxy admin key and the two virtual keys; `make litellm-secrets` generates them
 LITELLM_VARS := LITELLM_MASTER_KEY LITELLM_API_KEY LITELLM_SERVICE_KEY
+# Langfuse project keys and the Grafana reader's password; `make observability-secrets`
+OBSERVABILITY_VARS := LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY GRAFANA_DB_PASSWORD
 REQUIRED_VARS := OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY ADMIN_TOKEN \
-                 GRAFANA_ADMIN_PASSWORD POSTGRES_PASSWORD $(LITELLM_VARS)
-# Optional until session D mints them from the self-hosted Langfuse instance
-OPTIONAL_LANGFUSE_VARS := LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
+                 GRAFANA_ADMIN_PASSWORD POSTGRES_PASSWORD $(LITELLM_VARS) $(OBSERVABILITY_VARS)
+# Langfuse's containers read only this file: its variable names (POSTGRES_PASSWORD,
+# DATABASE_URL) collide with ours, and they have no use for the vendor keys.
+LANGFUSE_ENV := $$HOME/.bas-assistant-langfuse.env
+# Grafana is publicly reachable, so it gets its two passwords and nothing else.
+GRAFANA_ENV := $$HOME/.bas-assistant-grafana.env
 
 # Host-side runs: load the env file, then reach the compose services on their published ports
 WITH_ENV  := set -a && . "$$HOME/.bas-assistant.env" && set +a &&
@@ -22,7 +27,7 @@ HOST_URLS := POSTGRES_HOST=localhost POSTGRES_PORT=5433 LITELLM_BASE_URL=http://
 
 help:
 	@echo "Targets: up down test test-int lint format check-env preflight ingest eval redteam"
-	@echo "         litellm-keys litellm-secrets"
+	@echo "         litellm-keys litellm-secrets observability-secrets grafana-db-user"
 
 # ── secret guard ─────────────────────────────────────────────────────────────
 check-env:
@@ -43,9 +48,14 @@ check-env:
 	if [ -n "$$MISSING" ]; then \
 	  echo "ERROR: Empty variables (fill them with nano, not echo):$$MISSING" >&2; exit 1; \
 	fi; \
-	for VAR in $(OPTIONAL_LANGFUSE_VARS); do \
-	  VAL=$$(eval echo \$$$$VAR); \
-	  if [ -z "$$VAL" ]; then echo "WARN: $$VAR empty (expected until session D)"; fi; \
+	for SIDE_FILE in "$(LANGFUSE_ENV)" "$(GRAFANA_ENV)"; do \
+	  if [ ! -f "$$SIDE_FILE" ]; then \
+	    echo "ERROR: $$SIDE_FILE not found. Run: make observability-secrets" >&2; exit 1; \
+	  fi; \
+	  SIDE_MODE=$$(stat -f "%Mp%Lp" "$$SIDE_FILE" 2>/dev/null || stat -c "%a" "$$SIDE_FILE" 2>/dev/null); \
+	  if [ "$$SIDE_MODE" != "0600" ] && [ "$$SIDE_MODE" != "600" ]; then \
+	    echo "ERROR: $$SIDE_FILE must be mode 600 (got $$SIDE_MODE)." >&2; exit 1; \
+	  fi; \
 	done; \
 	echo "check-env: OK"
 
@@ -53,6 +63,7 @@ check-env:
 up: check-env
 	docker compose up -d --build --wait
 	$(MAKE) litellm-keys
+	$(MAKE) grafana-db-user
 
 # Register the dev ($5/month) and service ($2/month) virtual keys with the proxy
 litellm-keys:
@@ -66,6 +77,51 @@ litellm-secrets:
 	  printf '%s=sk-%s\n' "$$VAR" "$$(openssl rand -hex 24)" >> "$$ENV_FILE"; \
 	  echo "added $$VAR"; \
 	done
+
+# Append the Langfuse project keys and the Grafana reader's password to the main env file if
+# missing, then write Grafana's and Langfuse's own env files once; values are never printed
+observability-secrets:
+	@ENV_FILE="$$HOME/.bas-assistant.env"; LF_FILE="$(LANGFUSE_ENV)"; GF_FILE="$(GRAFANA_ENV)"; \
+	add() { grep -q "^$$1=." "$$ENV_FILE" || { printf '%s=%s\n' "$$1" "$$2" >> "$$ENV_FILE"; echo "added $$1"; }; }; \
+	add LANGFUSE_PUBLIC_KEY "pk-lf-$$(openssl rand -hex 16)"; \
+	add LANGFUSE_SECRET_KEY "sk-lf-$$(openssl rand -hex 16)"; \
+	add GRAFANA_DB_PASSWORD "$$(openssl rand -hex 24)"; \
+	set -a; . "$$ENV_FILE"; set +a; \
+	umask 077; \
+	if [ -f "$$GF_FILE" ]; then echo "$$GF_FILE exists, left as is"; else \
+	  { echo "GRAFANA_ADMIN_PASSWORD=$$GRAFANA_ADMIN_PASSWORD"; \
+	    echo "GRAFANA_DB_PASSWORD=$$GRAFANA_DB_PASSWORD"; } > "$$GF_FILE"; \
+	  echo "wrote $$GF_FILE"; \
+	fi; \
+	if [ -f "$$LF_FILE" ]; then echo "$$LF_FILE exists, left as is"; exit 0; fi; \
+	PG=$$(openssl rand -hex 24); MINIO=$$(openssl rand -hex 24); \
+	{ \
+	  echo "LANGFUSE_INIT_PROJECT_PUBLIC_KEY=$$LANGFUSE_PUBLIC_KEY"; \
+	  echo "LANGFUSE_INIT_PROJECT_SECRET_KEY=$$LANGFUSE_SECRET_KEY"; \
+	  echo "LANGFUSE_INIT_USER_PASSWORD=$$(openssl rand -hex 12)"; \
+	  echo "NEXTAUTH_SECRET=$$(openssl rand -hex 32)"; \
+	  echo "SALT=$$(openssl rand -hex 32)"; \
+	  echo "ENCRYPTION_KEY=$$(openssl rand -hex 32)"; \
+	  echo "CLICKHOUSE_PASSWORD=$$(openssl rand -hex 24)"; \
+	  echo "REDIS_AUTH=$$(openssl rand -hex 24)"; \
+	  echo "POSTGRES_PASSWORD=$$PG"; \
+	  echo "DATABASE_URL=postgresql://postgres:$$PG@langfuse-postgres:5432/postgres"; \
+	  echo "MINIO_ROOT_PASSWORD=$$MINIO"; \
+	  echo "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=$$MINIO"; \
+	  echo "LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY=$$MINIO"; \
+	} > "$$LF_FILE"; \
+	echo "wrote $$LF_FILE"
+
+# Login for the read-only role behind Grafana's Postgres data source (migration 0004); the
+# password reaches psql through the environment, never the command line.
+# TODO(session E): Grafana starts before this runs, so the first alert evaluations after a fresh
+# `make up` fail on the login; set the password before Grafana starts in the prod compose.
+grafana-db-user:
+	@$(WITH_ENV) printf '%s\n' '\getenv pw GRAFANA_DB_PASSWORD' \
+	  "ALTER ROLE grafana_reader LOGIN PASSWORD :'pw';" \
+	  | docker compose exec -T -e GRAFANA_DB_PASSWORD postgres \
+	    psql -q -v ON_ERROR_STOP=1 -U bas_assistant -d bas_assistant
+	@echo "grafana-db-user: OK"
 
 down:
 	docker compose down

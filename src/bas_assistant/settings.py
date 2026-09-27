@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr
     gemini_api_key: SecretStr
     admin_token: SecretStr
-    # Minted by the self-hosted Langfuse instance in session D; optional until then.
+    # Project keys of the self-hosted Langfuse (`make observability-secrets`); without them
+    # tracing is off, as in unit tests and CI.
     langfuse_public_key: SecretStr | None = None
     langfuse_secret_key: SecretStr | None = None
     grafana_admin_password: SecretStr
@@ -48,6 +49,7 @@ class Settings(BaseSettings):
     corpus_version: str = "2"
     redis_url: str = "redis://redis:6379/0"
     litellm_base_url: str = "http://litellm:4000"
+    langfuse_host: str = "http://langfuse-web:3000"
 
     # Postgres — host/port default to the compose service name and its internal
     # port; integration tests override via env to reach the published host port.

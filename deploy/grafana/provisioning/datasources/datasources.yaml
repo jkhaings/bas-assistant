@@ -1,0 +1,29 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  # A role that can select the dash_* views and nothing else (migration 0004), because
+  # anonymous viewers can send any SQL through a data source.
+  - name: Postgres
+    uid: postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    user: grafana_reader
+    editable: false
+    jsonData:
+      database: bas_assistant
+      sslmode: disable
+      postgresVersion: 1600
+      # The role's own connection limit is 5 (migration 0004); stay under it.
+      maxOpenConns: 4
+      maxIdleConns: 2
+    secureJsonData:
+      password: $GRAFANA_DB_PASSWORD

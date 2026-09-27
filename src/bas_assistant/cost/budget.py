@@ -5,9 +5,9 @@ from decimal import Decimal
 from uuid import UUID
 
 from redis import Redis
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, delete, func, insert, select
 
-from bas_assistant.db.activity import Usage
+from bas_assistant.db.activity import Budget, Usage
 
 
 def next_reset(now: datetime) -> datetime:
@@ -22,6 +22,13 @@ def spent_today(engine: Engine, now: datetime) -> Decimal:
             select(func.coalesce(func.sum(Usage.usd), 0)).where(Usage.created_at >= midnight)
         ).scalar_one()
     return Decimal(total)
+
+
+def sync_daily_cap(engine: Engine, cap: Decimal) -> None:
+    """Mirror DAILY_USD_CAP into `budgets`, so the Budget dashboard shows the cap in force."""
+    with engine.begin() as conn:
+        conn.execute(delete(Budget).where(Budget.scope == "global", Budget.period == "daily"))
+        conn.execute(insert(Budget).values(scope="global", period="daily", usd_limit=cap))
 
 
 def _allowance_key(user_id: UUID, now: datetime) -> str:

@@ -126,9 +126,13 @@ class FakeRetriever:
     passages: list[Passage] = field(default_factory=lambda: list(PASSAGES))
     embed: Usage | None = None
     seen_acl_groups: list[list[str]] = field(default_factory=list)
+    # Raised instead of returning, to stand in for a failure outside the model gateway.
+    crash: Exception | None = None
 
     def __call__(self, _question: str, acl_groups: list[str]) -> Retrieval:
         self.seen_acl_groups.append(acl_groups)
+        if self.crash is not None:
+            raise self.crash
         return Retrieval(passages=self.passages, retrieval_ms=12, rerank_ms=34, embed=self.embed)
 
 

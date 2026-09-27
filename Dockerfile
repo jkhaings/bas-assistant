@@ -54,6 +54,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 # No ENV/ARG for secrets — read from env_file at runtime
 
+# TODO(session E): UV_COMPILE_BYTECODE=1 in the build stage; without .pyc files a cold start
+# spent 4 minutes importing torch and transformers on a loaded host (HANDOFF_D.md).
+
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"

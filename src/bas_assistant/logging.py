@@ -7,6 +7,9 @@ Usage:
 Rules (from CLAUDE.md):
 - Never log request headers, raw env vars, settings objects, or raw questions.
 - Only the Presidio-redacted question appears in logs.
+
+Pass ``extra={"request_id": ...}`` to tie a line to a request; the OTel trace id is added
+automatically when a span is active, so a log line leads to its Langfuse trace.
 """
 
 import json
@@ -14,6 +17,8 @@ import logging
 import re
 import sys
 from typing import override
+
+from opentelemetry import trace
 
 # One definition; hooks and pygrep patterns are kept identical.
 _KEY_SHAPE = re.compile(
@@ -56,6 +61,12 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+        request_id = getattr(record, "request_id", None)
+        if request_id is not None:
+            payload["request_id"] = request_id
+        span_context = trace.get_current_span().get_span_context()
+        if span_context.is_valid:
+            payload["trace_id"] = format(span_context.trace_id, "032x")
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload)

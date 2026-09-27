@@ -13,6 +13,7 @@ from typing import Protocol
 import httpx
 from pydantic import BaseModel
 
+from bas_assistant.observability.tracing import record_generation, tracer
 from bas_assistant.settings import Settings
 
 
@@ -54,6 +55,18 @@ class OpenAIEmbedder:
         )
 
     def embed(self, texts: list[str]) -> EmbedBatch:
+        with tracer.start_as_current_span("llm embed") as span:
+            batch = self._embed(texts)
+            record_generation(
+                span,
+                model=batch.provider_and_model(self.model)[1],
+                input_tokens=batch.input_tokens,
+                output_tokens=0,
+                usd=batch.usd,
+            )
+        return batch
+
+    def _embed(self, texts: list[str]) -> EmbedBatch:
         start = time.monotonic()
         response = self._client.post("/embeddings", json={"model": self.model, "input": texts})
         response.raise_for_status()
