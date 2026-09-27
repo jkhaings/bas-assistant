@@ -20,7 +20,8 @@ pytestmark = pytest.mark.eval
 logger = logging.getLogger(__name__)
 
 APP_URL = "http://localhost:8000"
-POWER_QUESTION = "What is the power draw of the Red5-PLUS-1180?"  # golden row 8
+# The spot check in data/top20_questions.md; its top passage holds the answer.
+CACHED_QUESTION = "What is the power draw of the O3 Sense?"
 ENGINEER_ONLY_QUESTION = "What makes the DAC-633PoE suitable for fan coil applications?"  # row 19
 
 
@@ -80,9 +81,9 @@ def test_each_fallback_deployment_still_answers(group: str, deployment: str) -> 
 
 
 def test_same_question_twice_costs_nothing_the_second_time(app: httpx.Client) -> None:
-    _forget(POWER_QUESTION, "support")
-    first = _ask(app, POWER_QUESTION, "support")
-    second = _ask(app, POWER_QUESTION, "support")
+    _forget(CACHED_QUESTION, "support")
+    first = _ask(app, CACHED_QUESTION, "support")
+    second = _ask(app, CACHED_QUESTION, "support")
 
     first_receipt = _receipt(app, first["request_id"])
     second_receipt = _receipt(app, second["request_id"])

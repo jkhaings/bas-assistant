@@ -14,8 +14,8 @@ from bas_assistant.retrieval.store import PgVectorStore
 from bas_assistant.settings import Settings
 
 
-def _embed_usage(batch: EmbedBatch, alias_model: str) -> Usage:
-    provider, _, model = (batch.deployment or f"unknown/{alias_model}").partition("/")
+def _embed_usage(batch: EmbedBatch, requested_model: str) -> Usage:
+    provider, model = batch.provider_and_model(requested_model)
     return Usage(
         alias="embed",
         model=model,

@@ -255,3 +255,240 @@ Each has a matching `TODO` in the source.
 - **Dockerfile**: base images moved to Debian trixie (`ghcr.io/astral-sh/uv:0.11.16-python3.12-trixie-slim`, `python:3.12-slim-trixie`), WORKDIR `/app`.
 - **ADR 0001**: the fast fallback is gemini-3.8-flash; gemini-2.0-flash and 2.5-flash return 404 (retired).
 - **CI**: unchanged; `pytest -m unit` needs no services (SQLite, fakeredis, fake proxy).
+
+
+## Post-merge
+
+`origin/main` (session A) merged into `b-graph` as merge commit `c0e45c2`, plus a follow-up commit
+for the fixes below. Nothing on `main` was touched.
+
+### How the conflicts were resolved
+
+Where A and B conflicted, A's version was kept and B's behaviour added on top.
+
+- **Migrations**: A's `0001_corpus` and `0002_activity` are unchanged. B's schema needs are a new
+  `src/bas_assistant/db/migrations/versions/0003_graph.py`: `requests.retrieval_ms`,
+  `requests.rerank_ms`, nullable `requests.decision` / `latency_ms` (the graph writes the row
+  before it runs), and `ix_usage_created_at`. B's `alembic/` tree and `db.py` are deleted, and B's
+  code uses A's ORM models. A's `migrations/env.py` gains B's exclusion of LangGraph's checkpoint
+  tables from autogenerate. `Ticket.draft` / `Audit.detail` use JSON with a JSONB variant (same
+  Postgres DDL; `alembic check` is clean) so B's unit tests can create them on SQLite.
+- **Retriever**: `main.no_corpus_yet` is deleted. `agent/corpus.search_corpus` runs A's `retrieve()`,
+  and each of the top-5 parents becomes a passage (parent text, cited by its best child's chunk id).
+  A's `Citation` gained `chunk_id` and `passage`. The graph now writes `request_chunks` and an
+  `embed` usage row per request, as A's `/ask` did.
+- **/ask**: B's graph owns `POST /ask`. A's retrieval-only endpoint is kept unchanged at
+  `POST /search`, and its tests now call that path.
+- **Embeddings**: A's `OpenAIEmbedder` now calls the LiteLLM `embed` alias
+  (`embed_base_url=http://litellm:4000/v1`, `embed_model=embed`) with `LITELLM_API_KEY`, not the
+  OpenAI key. It takes USD and the deployment from the proxy headers, so usage rows record the
+  real model. B's own `gateway.embed()` was removed as dead code.
+- **Roles**: B's `roles.py` is deleted. The tool allowlist moved into A's `api/roles.py`
+  (`tools_for_role`), and the graph uses A's `demo_role`: a missing header now means support, not
+  422. Two B tests were changed to that behaviour.
+- **Settings, compose, Dockerfile, Makefile**: A's versions (`POSTGRES_PASSWORD`-built URL, `migrate`
+  one-shot, bookworm image, model cache) plus B's pieces:
+  - `litellm` service; its `DATABASE_URL` is assembled in the container from `POSTGRES_PASSWORD`.
+  - Redis published on 127.0.0.1:6379.
+  - The `litellm` database in A's `init.sql`.
+  - LiteLLM variables and targets in the Makefile, `alembic check` and Redis db 1 in `test-int`,
+    and a live `eval` target.
+- **`CORPUS_VERSION`**: default bumped from "0" to "1".
+- **Tests**: A's `tests/fakes.py` is kept; B's fakes moved to `tests/graph_fakes.py`, with fixture
+  chunk ids as UUIDs. B's integration test seeds real chunk rows for `request_chunks`' foreign key.
+  B's eval test now calls the running app over HTTP with real questions.
+- **Environment**:
+  - A's `a-retrieval` stack was stopped (`docker compose stop`; its volumes are kept) to free
+    ports 5433 and 8000.
+  - B's old trust-auth volume `b-graph_pgdata` was removed.
+  - A's crawl cache (`data/raw`, 113 files) and model cache volume (1.5 GB) were copied in.
+  - `make test-int` needs the compose Postgres, so `docker compose up -d --wait postgres redis` ran
+    before it and `make up` ran after.
+
+### Verified
+
+**uv sync**
+```
+$ uv sync --dev
+Resolved 198 packages in 24ms
+Checked 193 packages in 40ms
+```
+
+**make lint**
+```
+$ make lint
+uv run ruff check src/ tests/ .claude/hooks/
+All checks passed!
+uv run ruff format --check src/ tests/ .claude/hooks/
+88 files already formatted
+uv run mypy src/ tests/ .claude/hooks/
+Success: no issues found in 88 source files
+```
+
+**make test**
+```
+........................................................................ [ 89%]
+.................                                                        [100%]
+161 passed, 11 deselected in 12.14s
+```
+
+**make test-int** (fresh volume: 0001 → 0002 → 0003, drift check, A's 5 and B's 2 integration tests)
+```
+$ make test-int
+WARN: LANGFUSE_PUBLIC_KEY empty (expected until session D)
+WARN: LANGFUSE_SECRET_KEY empty (expected until session D)
+check-env: OK
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001, Enable pgvector, create the corpus tables, seed demo users.
+INFO  [alembic.runtime.migration] Running upgrade 0001 -> 0002, Create the remaining activity tables: threads, requests, usage, and evaluation.
+INFO  [alembic.runtime.migration] Running upgrade 0002 -> 0003, Agent graph columns: request timings, in-flight nulls, and the daily-cap index.
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.plugins] setting up autogenerate plugin alembic.autogenerate.schemas
+INFO  [alembic.runtime.plugins] setting up autogenerate plugin alembic.autogenerate.tables
+INFO  [alembic.runtime.plugins] setting up autogenerate plugin alembic.autogenerate.types
+INFO  [alembic.runtime.plugins] setting up autogenerate plugin alembic.autogenerate.constraints
+INFO  [alembic.runtime.plugins] setting up autogenerate plugin alembic.autogenerate.defaults
+INFO  [alembic.runtime.plugins] setting up autogenerate plugin alembic.autogenerate.comments
+No new upgrade operations detected.
+.......                                                                  [100%]
+7 passed, 165 deselected in 8.88s
+```
+
+**make up**
+```
+$ make up
+ Container b-graph-migrate-1 Started 
+ Container b-graph-litellm-1 Started 
+ Container b-graph-redis-1 Healthy 
+ Container b-graph-migrate-1 Exited 
+ Container b-graph-litellm-1 Healthy 
+ Container b-graph-app-1 Starting 
+ Container b-graph-app-1 Started 
+ Container b-graph-postgres-1 Healthy 
+ Container b-graph-migrate-1 Exited 
+ Container b-graph-redis-1 Healthy 
+ Container b-graph-litellm-1 Healthy 
+ Container b-graph-app-1 Healthy 
+/Library/Developer/CommandLineTools/usr/bin/make litellm-keys
+{"ts": "2026-09-26T21:20:47", "level": "INFO", "logger": "httpx", "message": "HTTP Request: POST http://localhost:4000/key/generate \"HTTP/1.1 200 OK\""}
+{"ts": "2026-09-26T21:20:47", "level": "INFO", "logger": "__main__", "message": "created virtual key dev with $5.0/month"}
+{"ts": "2026-09-26T21:20:47", "level": "INFO", "logger": "httpx", "message": "HTTP Request: POST http://localhost:4000/key/generate \"HTTP/1.1 200 OK\""}
+{"ts": "2026-09-26T21:20:47", "level": "INFO", "logger": "__main__", "message": "created virtual key service with $2.0/month"}
+
+$ docker compose ps -a
+NAME                 STATUS                      PORTS
+b-graph-app-1        Up 38 seconds (healthy)     127.0.0.1:8000->8000/tcp
+b-graph-litellm-1    Up 59 seconds (healthy)     127.0.0.1:4000->4000/tcp
+b-graph-migrate-1    Exited (0) 56 seconds ago   
+b-graph-postgres-1   Up 3 minutes (healthy)      127.0.0.1:5433->5432/tcp
+b-graph-redis-1      Up 3 minutes (healthy)      127.0.0.1:6379->6379/tcp
+```
+
+**make ingest**: the first run failed in A's crawler on a DNS error for one uncached URL (A's
+`crawl.fetch` only catches HTTP status errors). DNS resolved again seconds later, and the retry
+completed:
+```
+$ make ingest   # first run
+httpcore.ConnectError: [Errno -2] Name or service not known
+httpx.ConnectError: [Errno -2] Name or service not known
+make: *** [ingest] Error 1
+```
+```
+$ make ingest
+docker compose exec app python -m bas_assistant.ingest
+{"ts": "2026-09-27T04:29:29", "level": "ERROR", "logger": "bas_assistant.ingest.parse_pdf", "message": "docling failed for eZNT-T331_Catalog_Sheet.pdf; falling back", "exception": "... httpx.ConnectError ..."}
+{"ts": "2026-09-27T04:39:28", "level": "INFO", "logger": "__main__", "message": "ingest complete: ingested=112 updated=0 skipped=0 failed=0 documents_by_type={'pdf': 70, 'page': 42} chunks_by_type={'pdf': 1036, 'page': 439} parents=1429 chunks=1475 parse_quality={'docling': 69, 'fallback': 1, 'html': 42} embed_tokens=86872 embed_usd=0.0017374400000000000334 elapsed_s=772.9"}
+```
+All 112 embedding batches went through the proxy:
+```
+$ docker compose exec -T postgres psql -U bas_assistant -d litellm -c 'select model_group, model, count(*), sum(spend) from "LiteLLM_SpendLogs" group by 1, 2'
+ model_group |             model             | calls |   usd
+-------------+-------------------------------+-------+----------
+ embed       | openai/text-embedding-3-small |   112 | 0.001737
+```
+
+**Live smoke** (curl against the compose app, fresh cache)
+```
+$ curl -s -X POST http://localhost:8000/ask -H 'X-Demo-Role: support' -d '{"question":"What is the power draw of the Red5-PLUS-1180?"}'   # first time
+{"answer":"I couldn't find this in the documentation. I searched for: Red5-PLUS-1180 power draw. Try naming the product model, or ask about a spec, protocol or wiring detail.","citations":[],"decision":"abstained","route":"fast","model":"gpt-4o-mini","request_id":"b663ee7e-90d1-47d6-b1f3-59446f855a9a","thread_id":"bea25d2e-0168-42b4-808b-9d3ee5ec5ab0","approval_required":false,"ticket_id":null,"notes":[],"cache_hit":false}
+
+$ curl -s http://localhost:8000/requests/b663ee7e-90d1-47d6-b1f3-59446f855a9a/receipt
+{"request_id":"b663ee7e-90d1-47d6-b1f3-59446f855a9a","route":"fast","model":"gpt-4o-mini","input_tokens":1671,"output_tokens":45,"cached_tokens":0,"usd":0.0002757,"retrieval_ms":91,"rerank_ms":20562,"model_ms":3724,"total_ms":24495,"cache_hit":false,"calls":[{"stage":"router","alias":"fast","model":"gpt-4o-mini","provider":"openai","input_tokens":142,"output_tokens":18,"cached_tokens":0,"usd":0.0000321,"latency_ms":2364,"cache_hit":false},{"stage":"embed","alias":"embed","model":"text-embedding-3-small","provider":"openai","input_tokens":15,"output_tokens":0,"cached_tokens":0,"usd":3e-7,"latency_ms":508,"cache_hit":false},{"stage":"answer","alias":"fast","model":"gpt-4o-mini","provider":"openai","input_tokens":1514,"output_tokens":27,"cached_tokens":0,"usd":0.0002433,"latency_ms":852,"cache_hit":false}]}
+
+$ curl -s -X POST http://localhost:8000/ask -H 'X-Demo-Role: support' -d '{"question":"What is the power draw of the Red5-PLUS-1180?"}'   # same question again
+{"answer":"I couldn't find this in the documentation. I searched for: Red5-PLUS-1180 power draw. Try naming the product model, or ask about a spec, protocol or wiring detail.","citations":[],"decision":"abstained","route":"fast","model":"gpt-4o-mini","request_id":"f3941a14-4633-4384-b39c-4168f3762d7a","thread_id":"509af390-28cf-4099-a809-0b93922a303a","approval_required":false,"ticket_id":null,"notes":[],"cache_hit":true}
+
+$ curl -s http://localhost:8000/requests/f3941a14-4633-4384-b39c-4168f3762d7a/receipt
+{"request_id":"f3941a14-4633-4384-b39c-4168f3762d7a","route":"fast","model":"cache","input_tokens":0,"output_tokens":0,"cached_tokens":0,"usd":0.0,"retrieval_ms":0,"rerank_ms":0,"model_ms":0,"total_ms":1,"cache_hit":true,"calls":[{"stage":"answer","alias":"fast","model":"cache","provider":"cache","input_tokens":0,"output_tokens":0,"cached_tokens":0,"usd":0.0,"latency_ms":0,"cache_hit":true}]}
+
+$ curl -s -X POST http://localhost:8000/ask -H 'X-Demo-Role: support' -d '{"question":"What makes the DAC-633PoE suitable for fan coil applications?"}'   # engineer-only document
+{"answer":"I couldn't find this in the documentation. I searched for: DAC-633PoE suitability. Try naming the product model, or ask about a spec, protocol or wiring detail.","citations":[],"decision":"abstained","route":"strong","model":null,"request_id":"a3948534-0dc0-4334-a9b4-9dd4ea464d71","thread_id":"bb974c22-74fd-4d7f-874e-74dc99cd07fe","approval_required":false,"ticket_id":null,"notes":[],"cache_hit":false}
+
+$ curl -s -X POST http://localhost:8000/ask -H 'X-Demo-Role: engineer' -d '{"question":"What makes the DAC-633PoE suitable for fan coil applications?"}'
+{"answer":"The DAC-633PoE is suitable for fan coil applications for two key reasons:
+
+1. **PoE Power**: It uses Power over Ethernet, eliminating the need for a local step-down transformer — which fan coils often lack.
+2. **Fully Programmable**: It can be tailored to specific applications by creating and modifying BACnet objects and GCL+ programs, allowing custom control sequences for fan coil equipment.","citations":[{"chunk_id":"eb5ec44c-fa90-4ed7-be3e-1d9083ea419a","document_title":"DAC-633PoE","page":1,"source_url":"https://deltacontrols.com/wp-content/uploads/DAC-633PoE-Catalog-Sheet.pdf","snippet":"## Application
+
+The DAC-633PoE is suitable for controlling a wide range of equipment with small I/O requirements. It is particularly suited to applications such as fan coils or unit ventilators which often do not have a local step down transformer to provide controller power.
+
+The fully programmable"},{"chunk_id":"b9c6fd1e-e2cc-427e-b363-4802d4009164","document_title":"DAC-633PoE","page":1,"source_url":"https://deltacontrols.com/wp-content/uploads/DAC-633PoE-Catalog-Sheet.pdf","snippet":"## Description
+
+The DAC-633PoE is a fully programmable, native BACnet ® Advanced Application Controller for low density I/0 applications featuring Power over Ethernet (PoE). PoE provides high speed communications and device power in a single cable, simplifying wiring and eliminating the need for a l"}],"decision":"answered","route":"strong","model":"claude-sonnet-4-6","request_id":"c0d1aaea-eba6-4776-9283-351d441ddf36","thread_id":"24109188-08d2-40b8-bc8d-8fe26158011a","approval_required":false,"ticket_id":null,"notes":[],"cache_hit":false}
+
+$ curl -s http://localhost:8000/requests/c0d1aaea-eba6-4776-9283-351d441ddf36/receipt
+{"request_id":"c0d1aaea-eba6-4776-9283-351d441ddf36","route":"strong","model":"claude-sonnet-4-6","input_tokens":2115,"output_tokens":211,"cached_tokens":0,"usd":0.00897103,"retrieval_ms":84,"rerank_ms":15096,"model_ms":38905,"total_ms":54179,"cache_hit":false,"calls":[{"stage":"router","alias":"fast","model":"gemini-3.8-flash","provider":"gemini","input_tokens":81,"output_tokens":28,"cached_tokens":0,"usd":0.00016575,"latency_ms":32115,"cache_hit":false},{"stage":"embed","alias":"embed","model":"text-embedding-3-small","provider":"openai","input_tokens":14,"output_tokens":0,"cached_tokens":0,"usd":2.8e-7,"latency_ms":317,"cache_hit":false},{"stage":"answer","alias":"strong","model":"claude-sonnet-4-6","provider":"anthropic","input_tokens":2020,"output_tokens":183,"cached_tokens":0,"usd":0.008805,"latency_ms":6473,"cache_hit":false}]}
+```
+The script's final receipt call failed on a bug in the script itself (`sh`'s `echo` turned the
+answer's `\n` into raw newlines, which broke JSON parsing). The receipt above was fetched
+separately for the same request id.
+
+**make eval** (the rewritten live test: running app, real corpus, real models)
+```
+tests/eval/test_live_graph.py::test_each_fallback_deployment_still_answers[fast-fallback-gemini/gemini-3.8-flash]  PASSED
+tests/eval/test_live_graph.py::test_each_fallback_deployment_still_answers[strong-fallback-openai/gpt-4o]  PASSED
+tests/eval/test_live_graph.py::test_same_question_twice_costs_nothing_the_second_time  PASSED
+  receipt -> route fast, model gpt-4o-mini, usd 0.00015832, cache_hit false, stages router / embed / answer
+  receipt -> route fast, model cache, usd 0.0, cache_hit true
+tests/eval/test_live_graph.py::test_engineer_only_document_is_invisible_to_support  PASSED
+  support  -> abstained, no citations
+  engineer -> answered by claude-sonnet-4-6, citations DAC-633PoE p1 x2
+================= 4 passed, 168 deselected in 69.98s (0:01:09) =================
+```
+
+### Found after the merge (for session C and E)
+
+- **Retrieval precision, not the graph**: golden rows 8 (Red5-PLUS-1180 power draw) and 10
+  (Red5-PLUS-1146 BACnet profile) are answerable per `data/top20_questions.md`, but both abstain
+  end to end. The reranker's top parent is the product "Description" section, which scores high on
+  product-name overlap but holds no figures. The 74-character "B-BC" section never reaches the top
+  five. The answer model correctly returns `answerable: false` instead of guessing. A's tuning
+  table records top scores, not whether the fact was retrieved. Evidence:
+
+```
+$ curl -s -X POST localhost:8000/search -H "X-Demo-Role: support" -d {"question":"What is the power draw of the Red5-PLUS-1180?"}   # top-5 parents, summarised
+0.757 Red5-PLUS-1180 p 1 | power figure in passage: False
+0.362 Red5 p 1 | power figure in passage: False
+0.238 Red5-PLUS-1180 p 2 | power figure in passage: False
+0.102 Red5 p 1 | power figure in passage: False
+0.09 Red5-PLUS-1180 p 1 | power figure in passage: False
+```
+
+  The O3 Sense spot check answers correctly ("24 VDC, 2 W typical, 9 W max", O3 p1). Session C's
+  golden eval will show the real pass rate.
+- **Latency**: the CPU reranker takes 13–20 s per request inside the container (`rerank_ms` in the
+  receipts above). The first engineer request also waited 32 s for the router: gpt-4o-mini timed
+  out and the proxy fell back to gemini-3.8-flash (`"stage":"router","model":"gemini-3.8-flash"`,
+  a real fallback in live traffic). Total 54 s against a p95 target of 8 s: session E has to look
+  at the reranker (smaller model, fewer candidates, or a warm GPU box).
+- **Ingest robustness** (A's code): `crawl.fetch` does not catch `httpx.ConnectError`, so one DNS
+  failure aborts the whole crawl; Docling fell back on eZNT-T331 after a network error while
+  checking its models on Hugging Face. Corpus is 1429 parents / 1475 chunks (A's run had 1459 /
+  1502 with Docling on every PDF).
+- **Usage rows from this ingest** still say model `embed` / provider `openai`: the fix that records
+  the proxy's deployment (`EmbedBatch.provider_and_model`) landed after this ingest ran. Receipts
+  for `/ask` already show `text-embedding-3-small` / `openai`.
+- A's `a-retrieval` stack is stopped, not removed. Restart it with `docker compose start` in that
+  worktree (only one stack fits on ports 5433 and 8000 at a time).

@@ -26,6 +26,11 @@ class EmbedBatch(BaseModel):
     # "<provider>/<model>" of the deployment the proxy used, when it reports one.
     deployment: str = ""
 
+    def provider_and_model(self, requested_model: str) -> tuple[str, str]:
+        """For the usage row: what served the batch, or `unknown` and the requested name."""
+        provider, _, model = (self.deployment or f"unknown/{requested_model}").partition("/")
+        return provider, model
+
 
 class EmbeddingProvider(Protocol):
     """Anything that can turn text into vectors and report what it cost."""
