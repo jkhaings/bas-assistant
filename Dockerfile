@@ -1,28 +1,31 @@
 # syntax=docker/dockerfile:1
 
 # --- build stage ---
-FROM ghcr.io/astral-sh/uv:0.11.16-python3.12-bookworm-slim AS build
+FROM ghcr.io/astral-sh/uv:0.11.16-python3.12-trixie-slim AS build
 
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src/ src/
-RUN uv sync --frozen --no-dev
+# Non-editable so the venv does not point back into the build stage's source tree.
+RUN uv sync --frozen --no-dev --no-editable
 
 # --- runtime stage ---
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12-slim-trixie AS runtime
 
 # Non-root user
 RUN useradd --create-home --shell /bin/bash app
+WORKDIR /app
+RUN chown app:app /app
 USER app
-WORKDIR /home/app
 
-# Copy the installed venv and source from build stage
+# Same /app/.venv path as the build stage: console scripts (alembic) keep valid shebangs.
 COPY --from=build --chown=app:app /app/.venv .venv
-COPY --from=build --chown=app:app /app/src src
+COPY --chown=app:app alembic.ini ./
+COPY --chown=app:app alembic/ alembic/
 
-ENV PATH="/home/app/.venv/bin:$PATH" \
+ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 

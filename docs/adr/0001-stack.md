@@ -14,7 +14,7 @@ One line per decision, with the reason.
 | Embeddings | OpenAI text-embedding-3-small via LiteLLM | — | Best quality/cost in class; swappable via alias |
 | Reranker | bge-reranker-base (local, sentence-transformers) | Cohere Rerank | Free, no network call, trial key unreliable |
 | LLM gateway | LiteLLM | — | Single alias layer, cost logging, virtual keys, fallbacks |
-| Fast alias | gpt-4o-mini → gemini-2.0-flash fallback | — | Cheapest capable model |
+| Fast alias | gpt-4o-mini → gemini-3.8-flash fallback (reasoning_effort low) | gemini-2.0-flash | Cheapest capable model; gemini-2.0-flash and 2.5-flash return 404 (retired), verified Sep 26 in session B |
 | Strong alias | claude-sonnet-4-6 → gpt-4o fallback | — | Best reasoning for complex questions |
 | Agent graph | LangGraph | raw loop, OpenAI Agents SDK | Named nodes, typed state, pauseable at human gate, replayable |
 | Human gate | LangGraph `interrupt` | webhook, Celery | Same thread, resumable, no extra service |
