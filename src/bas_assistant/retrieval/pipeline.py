@@ -89,6 +89,13 @@ def _fused_candidates(
     return [by_id[chunk_id] for chunk_id in top_ids if chunk_id in by_id]
 
 
+def _rerank_text(chunk: Chunk) -> str:
+    # Sibling products share sections word for word ("BACnet Building Controller (B-BC)"),
+    # and a spec section rarely names its product; the title tells the cross-encoder which
+    # product the chunk describes.
+    return f"{chunk.document.title}\n{chunk.text}"
+
+
 def _best_child_per_parent(
     chunks: list[Chunk], scores: list[float]
 ) -> dict[uuid.UUID, tuple[Chunk, float]]:
@@ -157,7 +164,8 @@ def retrieve(query: str, acl_groups: list[str], deps: RetrievalDeps) -> Retrieva
     with tracer.start_as_current_span("retrieval.rerank") as span:
         # Skip the model call entirely on an empty pool — no ACL-visible chunk
         # matched at all — rather than trust the reranker to handle a 0-length batch.
-        scores = deps.reranker(query, [chunk.text for chunk in candidates]) if candidates else []
+        texts = [_rerank_text(chunk) for chunk in candidates]
+        scores = deps.reranker(query, texts) if candidates else []
         span.set_attributes(
             {"rerank.pairs": len(scores), "rerank.top_score": max(scores, default=0)}
         )

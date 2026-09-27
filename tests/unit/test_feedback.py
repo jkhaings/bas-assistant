@@ -106,7 +106,7 @@ def test_a_flag_is_stored_with_its_reason_redacted(client: TestClient, engine: E
     assert response.status_code == 204
     with engine.connect() as conn:
         reasons = list(conn.execute(select(Flag.reason)).scalars())
-    assert reasons == ["Says 4 W but the sheet says 6 W, ask [REDACTED]"]
+    assert reasons == ["Says 4 W but the sheet says 6 W, ask <EMAIL_ADDRESS>"]
 
 
 def test_an_empty_flag_reason_is_rejected(client: TestClient) -> None:

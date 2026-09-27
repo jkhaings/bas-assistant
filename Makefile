@@ -23,7 +23,8 @@ GRAFANA_ENV := $$HOME/.bas-assistant-grafana.env
 
 # Host-side runs: load the env file, then reach the compose services on their published ports
 WITH_ENV  := set -a && . "$$HOME/.bas-assistant.env" && set +a &&
-HOST_URLS := POSTGRES_HOST=localhost POSTGRES_PORT=5433 LITELLM_BASE_URL=http://localhost:4000
+HOST_URLS := POSTGRES_HOST=localhost POSTGRES_PORT=5433 LITELLM_BASE_URL=http://localhost:4000 \
+             EMBED_BASE_URL=http://localhost:4000/v1 REDIS_URL=redis://localhost:6379/0
 
 help:
 	@echo "Targets: up down test test-int lint format check-env preflight ingest eval redteam"
@@ -112,7 +113,7 @@ observability-secrets:
 	} > "$$LF_FILE"; \
 	echo "wrote $$LF_FILE"
 
-# Login for the read-only role behind Grafana's Postgres data source (migration 0004); the
+# Login for the read-only role behind Grafana's Postgres data source (migration 0005); the
 # password reaches psql through the environment, never the command line.
 # TODO(session E): Grafana starts before this runs, so the first alert evaluations after a fresh
 # `make up` fail on the login; set the password before Grafana starts in the prod compose.
@@ -140,13 +141,13 @@ test-int: check-env
 
 # ── quality ──────────────────────────────────────────────────────────────────
 lint:
-	$(RUFF) check src/ tests/ .claude/hooks/
-	$(RUFF) format --check src/ tests/ .claude/hooks/
-	$(MYPY) src/ tests/ .claude/hooks/
+	$(RUFF) check src/ tests/ eval/ .claude/hooks/
+	$(RUFF) format --check src/ tests/ eval/ .claude/hooks/
+	$(MYPY) src/ tests/ eval/ .claude/hooks/
 
 format:
-	$(RUFF) format src/ tests/ .claude/hooks/
-	$(RUFF) check --fix src/ tests/ .claude/hooks/
+	$(RUFF) format src/ tests/ eval/ .claude/hooks/
+	$(RUFF) check --fix src/ tests/ eval/ .claude/hooks/
 
 # ── preflight ────────────────────────────────────────────────────────────────
 preflight: lint test
@@ -159,9 +160,13 @@ preflight: lint test
 ingest:
 	docker compose exec app python -m bas_assistant.ingest
 
-# Live models through the local proxy. Session C adds the golden set and RAGAS.
+# Live models through the local proxy: the golden set (and B's live checks), then RAGAS over
+# the golden answers. RAGAS runs even when a golden case fails; either failing fails the target.
 eval:
-	@$(WITH_ENV) $(HOST_URLS) REDIS_URL=redis://localhost:6379/0 $(PYTEST) -m eval
+	@$(WITH_ENV) $(HOST_URLS) $(PYTEST) -m eval; golden=$$?; \
+	$(WITH_ENV) $(HOST_URLS) $(PYTHON) eval/ragas_run.py && cat eval/results/latest.md; ragas=$$?; \
+	[ $$golden -eq 0 ] && [ $$ragas -eq 0 ]
 
+# Attacks against the running stack; writes an eval_runs row (kind redteam).
 redteam:
-	@echo "not implemented until session C" >&2; exit 1
+	@$(WITH_ENV) $(HOST_URLS) $(PYTEST) -m redteam

@@ -18,6 +18,7 @@ from bas_assistant.agent.nodes import AgentContext
 from bas_assistant.db.activity import (
     Audit,
     Budget,
+    EvalRun,
     Feedback,
     Flag,
     Request,
@@ -38,7 +39,19 @@ def engine() -> Iterator[Engine]:
         "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
     # Only the activity tables the graph writes: the corpus tables use Postgres-only types.
-    tables = [User, Thread, Request, RequestChunk, Usage, Ticket, Audit, Feedback, Flag, Budget]
+    tables = [
+        User,
+        Thread,
+        Request,
+        RequestChunk,
+        Usage,
+        Ticket,
+        Audit,
+        EvalRun,
+        Feedback,
+        Flag,
+        Budget,
+    ]
     Base.metadata.create_all(engine, tables=[model.__table__ for model in tables])  # type: ignore[misc]
     with engine.begin() as conn:
         conn.execute(
@@ -80,6 +93,7 @@ def runtime(engine: Engine, redis: Redis, proxy: FakeProxy, retriever: FakeRetri
         daily_usd_cap=Decimal(3),
         user_daily_questions=50,
         corpus_version="test",
+        ip_rate_limit=20,
     )
 
 

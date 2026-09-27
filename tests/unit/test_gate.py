@@ -13,7 +13,7 @@ from tests.graph_fakes import ADMIN_TOKEN, FakeProxy, answer_json, ask
 
 pytestmark = pytest.mark.unit
 
-_ADMIN = {"X-Admin-Token": ADMIN_TOKEN}
+_ADMIN = {"X-Admin-Token": ADMIN_TOKEN, "X-Demo-Role": "admin"}
 
 
 def _ask_for_ticket(client: TestClient, proxy: FakeProxy, role: str = "engineer") -> dict[str, Any]:
@@ -80,7 +80,7 @@ def test_approval_with_the_token_resumes_the_graph_and_files_the_ticket(
             conn.execute(select(Audit.action).order_by(Audit.created_at)).scalars()
         )
         decision: str | None = conn.execute(select(Request.decision)).scalar_one()
-    assert actions == ["ticket_proposed", "ticket_approved", "ticket_filed"]
+    assert actions == ["ticket_proposed", "decision", "ticket_approved", "ticket_filed"]
     assert decision == "answered"
 
 
@@ -162,3 +162,21 @@ def test_a_second_ticket_on_the_same_thread_can_be_approved_right_away(
     assert response.json()["status"] == "filed"
     statuses = [t["status"] for t in client.get("/tickets", headers=_ADMIN).json()]
     assert statuses == ["filed", "filed"]
+
+
+def test_the_admin_token_alone_does_not_let_another_role_approve(
+    client: TestClient, proxy: FakeProxy, engine: Engine
+) -> None:
+    thread_id = _ask_for_ticket(client, proxy)["thread_id"]
+
+    response = client.post(
+        "/approve",
+        json={"thread_id": thread_id, "approve": True},
+        headers={"X-Admin-Token": ADMIN_TOKEN, "X-Demo-Role": "engineer"},
+    )
+
+    assert response.status_code == 403
+    assert client.get("/tickets", headers=_ADMIN).json()[0]["status"] == "proposed"
+    with engine.connect() as conn:
+        refused = conn.execute(select(Audit.actor).where(Audit.action == "approve_refused"))
+        assert list(refused.scalars()) == ["engineer"]

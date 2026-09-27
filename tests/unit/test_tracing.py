@@ -113,7 +113,7 @@ def test_no_span_carries_the_raw_question(client: TestClient, spans: InMemorySpa
     assert values
     assert not [value for value in values if "jane.doe@example.com" in value]
     (root,) = _named(spans, "POST /ask")
-    assert "[REDACTED]" in str((root.attributes or {})["langfuse.trace.input"])
+    assert "<EMAIL_ADDRESS>" in str((root.attributes or {})["langfuse.trace.input"])
 
 
 def test_the_root_span_keeps_no_user_agent_or_client_address(
@@ -150,7 +150,7 @@ def test_an_approval_records_the_gate_resuming(
     client.post(
         "/approve",
         json={"thread_id": body["thread_id"], "approve": True},
-        headers={"X-Admin-Token": ADMIN_TOKEN},
+        headers={"X-Admin-Token": ADMIN_TOKEN, "X-Demo-Role": "admin"},
     )
 
     (resumed,) = _named(spans, "gate resumed")

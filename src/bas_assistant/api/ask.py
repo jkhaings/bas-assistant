@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from bas_assistant.api.roles import Role, acl_groups_for_role, demo_role
 from bas_assistant.db.activity import Request, RequestChunk, Thread, Usage, User
 from bas_assistant.db.engine import get_session
-from bas_assistant.logging import redact
+from bas_assistant.guardrails.input import redact
+from bas_assistant.guardrails.limits import per_ip_limit
 from bas_assistant.retrieval.embeddings import OpenAIEmbedder
 from bas_assistant.retrieval.pipeline import (
     Citation,
@@ -79,7 +80,7 @@ def _demo_user(session: Session, role: Role) -> User:
 
 
 def _create_request(
-    session: Session, role: Role, question: str, decision: str, latency_ms: int
+    session: Session, role: Role, question_redacted: str, decision: str, latency_ms: int
 ) -> Request:
     user = _demo_user(session, role)
     thread = Thread(user_id=user.id)
@@ -90,10 +91,7 @@ def _create_request(
         thread_id=thread.id,
         user_id=user.id,
         role=role.value,
-        # TODO(session C): swap for Presidio's entity-aware redaction (HANDOFF_A.md).
-        # The contract already holds — the raw question is never logged or stored —
-        # but this catches email/key shapes only, not names, phones, or addresses.
-        question_redacted=redact(question),
+        question_redacted=question_redacted,
         decision=decision,
         latency_ms=latency_ms,
     )
@@ -125,7 +123,7 @@ def _record_result(
     session.commit()
 
 
-@router.post("/search", response_model=AskResponse)
+@router.post("/search", response_model=AskResponse, dependencies=[Depends(per_ip_limit)])
 def ask(
     body: AskRequest,
     role: Role = Depends(demo_role),
@@ -134,11 +132,13 @@ def ask(
 ) -> AskResponse:
     """Retrieve citations for a question. Abstains when nothing scores above threshold."""
     start = time.monotonic()
-    result = retrieve(body.question, acl_groups_for_role(role), deps)
+    # The query embedding is a model call too: it gets the redacted question, never the raw one.
+    question = redact(body.question).text
+    result = retrieve(question, acl_groups_for_role(role), deps)
     latency_ms = int((time.monotonic() - start) * 1000)
 
     decision = "abstained" if result.abstained else "retrieved"
-    request = _create_request(session, role, body.question, decision, latency_ms)
+    request = _create_request(session, role, question, decision, latency_ms)
     _record_result(session, request, result, deps.embedder.model)
 
     return AskResponse(

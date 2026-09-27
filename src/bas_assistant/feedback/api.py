@@ -10,7 +10,7 @@ from sqlalchemy import Engine, delete, insert, select
 from bas_assistant.agent.api import Runtime, current_user
 from bas_assistant.agent.state import UserContext
 from bas_assistant.db.activity import Feedback, Flag, Request
-from bas_assistant.logging import redact
+from bas_assistant.guardrails.input import redact
 from bas_assistant.observability.metrics import FEEDBACK, FLAGS
 
 router = APIRouter()
@@ -55,11 +55,11 @@ def give_feedback(request_id: UUID, body: FeedbackBody, user: Caller, runtime: R
 def flag_answer(request_id: UUID, body: FlagBody, user: Caller, runtime: Runtime) -> None:
     engine = runtime.agent.engine
     _check_owner(engine, request_id, user)
-    # TODO(session C): Presidio instead of the regex redaction, as for the question.
+    # Presidio, as for the question: the reason is free text from a public page.
     with engine.begin() as conn:
         conn.execute(
             insert(Flag).values(
-                request_id=request_id, reviewer_id=user.id, reason=redact(body.reason)
+                request_id=request_id, reviewer_id=user.id, reason=redact(body.reason).text
             )
         )
     FLAGS.inc()

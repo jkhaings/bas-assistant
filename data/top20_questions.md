@@ -55,28 +55,46 @@ and latency numbers in `docs/adr/0003-reranker.md`.
 
 **Session A (0.5, `BAAI/bge-reranker-base` over 30 candidates):**
 
-Measured against the live `/ask` endpoint after the real ingest, not guessed:
+Session A set 0.5 from the top rerank scores of the live `/search` endpoint. Session C changed what
+the reranker reads: each chunk is now scored with its document's title in front of it, and the
+lexical search matches the title too (weighted above the chunk's own words). Golden rows 8 and 10
+needed that. Their facts sit in short sections ("## Power / 24 VDC (20 W max) ...", "BACnet
+Building Controller (B-BC)") that never name the product, and sibling catalog sheets repeat them
+word for word. Before the change, row 8's power section was not among the 30 candidates at all
+(vector and lexical rank both past 20). Row 10's section tied at 0.662 with four sibling products'
+identical sections and ranked 7th. Scores were measured again for every row (session C
+diagnostic, `retrieve()` in the app container, Sep 27 2026):
 
-| Case | Top rerank score |
-|---|---|
-| Row 1 (O3 Sense power draw, spot check) | 0.804 |
-| Row 4 (eBM-800 ordering) | 0.921 |
-| Row 6 (eZNTW product number) | 0.982 |
-| Row 10 (Red5-PLUS-1146 BACnet profile) | 0.996 |
-| Row 12 (eZNS communication ports) | 0.991 |
-| Row 19 as `engineer` (DAC-633PoE) | 0.9998 |
-| Row 20 as `engineer` (UNOnext) | 0.554 |
-| Row 20 as `support` (ACL-blocked — spurious match) | 0.388 |
-| Row 19 as `support` (ACL-blocked — spurious match) | 0.218 |
-| Row 18 (Honeywell, out-of-scope) | 0.461 |
-| Row 16 (refund policy, out-of-scope) | 0.00013 |
-| Row 17 (password reset, out-of-scope) | 0.0006 |
+| Row | Role | Top score before | Top score after | Expected document in top 5, before / after |
+|---|---|---|---|---|
+| 1 | support | 1.000 | 1.000 | yes / yes |
+| 2 | support | 0.999 | 1.000 | yes / yes |
+| 3 | support | 0.986 | 0.998 | yes / yes |
+| 4 | support | 0.921 | 0.929 | yes / yes |
+| 5 | support | 0.978 | 0.981 | yes / yes |
+| 6 | support | 0.982 | 0.972 | yes / yes |
+| 7 | support | 0.936 | 0.991 | yes / yes |
+| 8 | support | 0.757 | 0.962 | yes / yes (the power section: no / yes) |
+| 9 | support | 0.976 | 0.994 | yes / yes |
+| 10 | support | 0.996 | 0.999 | yes / yes (1146's own B-BC section: rank 7 / rank 3) |
+| 11 | support | 0.735 | 0.972 | **no** / yes |
+| 12 | support | 0.991 | 0.979 | **no** / yes |
+| 13 | support | 0.994 | 0.997 | yes / yes |
+| 14 | support | 0.833 | 0.998 | yes / yes |
+| 15 | support | 1.000 | 1.000 | yes / yes |
+| 16 | support (out-of-scope) | 0.000 | 0.000 | — |
+| 17 | support (out-of-scope) | 0.068 | 0.052 | — |
+| 18 | support (out-of-scope) | 0.228 | 0.211 | — |
+| 19 | support (ACL-blocked) | 0.216 | 0.092 | — |
+| 19 | engineer | 1.000 | 1.000 | yes / yes |
+| 20 | support (ACL-blocked) | 0.388 | 0.529 | — |
+| 20 | engineer | 0.554 | 0.995 | yes / yes |
 
-The gap that matters: every question this table says should abstain topped out at 0.461; every
-question that should answer bottomed out at 0.554. 0.5 sits in that gap. Two questions were
-rewritten from an earlier draft because they fell the wrong side of any workable threshold: a
-warranty question phrased around "Red5" scored 0.95 (the reranker matches on product-line
-vocabulary, not on whether the fact is actually there — the crude top-score threshold cannot catch
-that; that level of check is session B's `answer` node and C's faithfulness eval, not session A's
-retrieval-only abstain signal), and a baud-rate question for UNOnext scored too close to its own
-ACL-blocked-support score (0.68 vs 0.76) because Red5's docs also discuss Modbus baud rates.
+After the change every answerable row scores at least 0.929 and every must-abstain row at most
+0.529. The threshold moved from 0.5 to 0.7, near the middle of that gap. Row 20 as support now
+scores 0.529 because the public UNOnext datasheet carries the product name. At 0.5 it would have
+passed retrieval and relied on the answer model to abstain.
+
+The top-score threshold is still a coarse signal. Session A found a warranty question phrased
+around "Red5" that scored 0.95 on product-line vocabulary alone, and dropped it from the set. The
+answer model's `answerable` flag and the golden eval are the real check.

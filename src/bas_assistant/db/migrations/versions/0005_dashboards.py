@@ -5,8 +5,8 @@ Anonymous Grafana viewers can send any SQL through the data source, so Grafana c
 question, an answer, a flag reason or an email address. `make grafana-db-user` gives the
 role its login password from the environment.
 
-Revision ID: 0004
-Revises: 0003
+Revision ID: 0005
+Revises: 0004
 Create Date: 2026-09-27
 """
 
@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision: str = "0004"
-down_revision: str | None = "0003"
+revision: str = "0005"
+down_revision: str | None = "0004"
 branch_labels: str | None = None
 depends_on: str | None = None
 

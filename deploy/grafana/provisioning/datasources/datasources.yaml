@@ -9,7 +9,7 @@ datasources:
     isDefault: true
     editable: false
 
-  # A role that can select the dash_* views and nothing else (migration 0004), because
+  # A role that can select the dash_* views and nothing else (migration 0005), because
   # anonymous viewers can send any SQL through a data source.
   - name: Postgres
     uid: postgres
@@ -22,7 +22,7 @@ datasources:
       database: bas_assistant
       sslmode: disable
       postgresVersion: 1600
-      # The role's own connection limit is 5 (migration 0004); stay under it.
+      # The role's own connection limit is 5 (migration 0005); stay under it.
       maxOpenConns: 4
       maxIdleConns: 2
     secureJsonData:

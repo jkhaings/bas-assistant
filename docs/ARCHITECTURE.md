@@ -19,8 +19,8 @@ This file becomes `docs/ARCHITECTURE.md` in the repo. Keep it current-state trut
 |---|---|---|
 | 0 — scaffold | `main` | Shipped: `/healthz`, settings, logging, CI |
 | A — retrieval | `a-retrieval` | Shipped: ingest (crawl/parse/chunk/embed), hybrid retrieval, `GET /documents`; its retrieval-only `/ask` is now `POST /search` |
-| B — graph | `b-graph` | Built on branch with main (A) merged in, not merged to main: LiteLLM proxy (fast / strong / embed, embeddings included), router, Redis cache, `usage` + receipt, daily cap + allowance, LangGraph with human gate on a Postgres checkpointer, retrieve node on A's hybrid search, `/ask`, `/ask/stream`, `/approve`, `/threads/{id}/history`, `/tickets`, `/requests/{id}/receipt` |
-| C — guardrails | `c-guardrails` | Not started |
+| B — graph | `b-graph` | Merged to main: LiteLLM proxy (fast / strong / embed, embeddings included), router, Redis cache, `usage` + receipt, daily cap + allowance, LangGraph with human gate on a Postgres checkpointer, retrieve node on A's hybrid search, `/ask`, `/ask/stream`, `/approve`, `/threads/{id}/history`, `/tickets`, `/requests/{id}/receipt` |
+| C — guardrails | `c-guardrails` | Merged to main: Presidio input redaction before storage and models, injection/off-topic rail (patterns + router flags → `refuse`), output PII check, per-IP limiter, one limit error shape, audit row on every decision, `/approve` tool allowlist, key-budget 429, prompt versioning, golden set (`make eval`) + RAGAS + `eval_runs` + `GET /evals/latest`, red team (`make redteam`), `docs/security.md`. Also retrieval (document title in lexical rank and rerank, threshold 0.7) and crawler retries |
 | D — observability | `d-observability` | Built on branch, not merged: reranker loaded at startup, 15 candidates, MiniLM cross-encoder (ADR 0003); OpenTelemetry traces to self-hosted Langfuse; Prometheus `/metrics`; Grafana Budget and Quality & adoption dashboards on `dash_*` views with alert rules; `POST /requests/{id}/feedback` and `/flag`; JSON logs with request_id and trace_id |
 | E — ship | `e-ship` | Not started |
 
@@ -63,9 +63,19 @@ Non-goals: no free chat about anything outside the corpus, no actions other than
 
 Cost rolls up from `usage`; adoption from `requests` and `feedback`; quality from `flags` plus eval results stored in `eval_runs`. All tables exist as of session A (one migration each for corpus+users, then the rest of activity) so no later session alters a table another session depends on; sessions B–D are the first to *write* to most of the activity rows beyond users/threads/requests/request_chunks/usage.
 
-**Session B additions (migration `0003`)**: `requests.retrieval_ms` and `requests.rerank_ms`; `requests.decision` and `requests.latency_ms` become nullable, because a graph turn writes its request row before it runs and fills them in when it closes; `ix_usage_created_at` for the daily cap. `Ticket.draft` and `Audit.detail` use a JSON type with a JSONB variant (same DDL on Postgres) so unit tests can create them on SQLite. LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) are created by `PostgresSaver.setup()` at startup and excluded from Alembic autogenerate (`db/migrations/env.py`). LiteLLM keeps virtual keys and spend logs (`LiteLLM_SpendLogs`) in a separate `litellm` database on the same server (`deploy/postgres/init.sql`); `make test-int` uses `bas_test`. The checkpoint tables hold the raw question and every turn's history, unredacted and with no expiry; session C must redact before the graph runs or purge them.
+**Session B additions (migration `0003`)**: `requests.retrieval_ms` and `requests.rerank_ms`; `requests.decision` and `requests.latency_ms` become nullable, because a graph turn writes its request row before it runs and fills them in when it closes; `ix_usage_created_at` for the daily cap. `Ticket.draft` and `Audit.detail` use a JSON type with a JSONB variant (same DDL on Postgres) so unit tests can create them on SQLite. LangGraph's checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations`) are created by `PostgresSaver.setup()` at startup and excluded from Alembic autogenerate (`db/migrations/env.py`). LiteLLM keeps virtual keys and spend logs (`LiteLLM_SpendLogs`) in a separate `litellm` database on the same server (`deploy/postgres/init.sql`); `make test-int` uses `bas_test`. Since session C the graph only ever sees the Presidio-redacted question, so the checkpoint tables hold redacted questions and answers; they still have no expiry. `budgets` exists but is unused: limits are env settings plus LiteLLM virtual-key budgets.
 
-**Session D additions (migration `0004`)**:
+**Session C additions (migration `0004`)**:
+- `requests.prompt_version` records `agent.prompts.PROMPT_VERSION` for each request.
+- `eval_runs.scores` uses the same JSON-with-JSONB-variant type as `tickets.draft` (same Postgres
+  DDL; `alembic check` is clean), so unit tests can create it on SQLite.
+- `eval_runs` is written by `eval/ragas_run.py` (kind `golden`) and by the red-team suite (kind
+  `redteam`).
+- `usage` gains stage `judge` rows, one per RAGAS judge call.
+- New `audit` actions: `input_redacted`, `input_refused`, `decision`, `rate_limited`,
+  `daily_cap_reached`, `allowance_used`, `approve_refused`.
+
+**Session D additions (migration `0005`, after C's `0004`)**:
 - Fifteen `dash_*` views behind every Postgres panel in Grafana. `dash_questions` is closed `/ask` turns only: `/search` diagnostics have no route and are left out. It is the building block for the others and holds request, thread and user ids, so it is the one view Grafana cannot read.
 - A `grafana_reader` role that may select the fourteen panel views and nothing else, with a connection limit of 5 and a 5 s `statement_timeout`. `TEMP` is revoked from `PUBLIC` on the database, so no role can fill the disk with temp tables. The role is created NOLOGIN; `make grafana-db-user` sets its password from `GRAFANA_DB_PASSWORD`.
 - `budgets` rows: global/monthly $5 (the app's LiteLLM virtual-key budget) and global/daily, which the app rewrites from `DAILY_USD_CAP` at every start (`cost/budget.sync_daily_cap`). The cap is still enforced from the setting; the row lets the dashboard show the cap that is actually enforced.
@@ -87,6 +97,8 @@ Built in session A, `src/bas_assistant/ingest/`:
 7. **Report**: `python -m bas_assistant.ingest` logs one structured line: documents ingested/updated/skipped/failed by source type, parents and chunks written, the parse_quality distribution, embed tokens and USD, and elapsed time.
 
 Idempotent and resumable (a re-run with no changes costs $0 in both crawl and embed time); not yet scheduled — `make ingest` is a manual step until a later session wants a cron/Prefect flow.
+
+Session C: a fetch that fails on a network error, a 5xx or a 429 is retried with tenacity. Backoff is exponential from the 10 s crawl delay, 4 attempts. On a final failure the URL is logged, that source is skipped for this run, and the crawl goes on. Before this, one DNS error aborted the whole crawl. A 4xx is skipped immediately. A robots.txt fetch that still fails after its retries ends the crawl, loudly.
 
 **Deferred from this session:** Prefect scheduling (ingest is a manual `make ingest`), the Zendesk O3 help center, and document retirement (removed sources' chunks are not pruned). Since the session B merge, embeddings go through the LiteLLM proxy's `embed` alias with the app's virtual key (`embed_base_url`, `embed_model`, `litellm_api_key`), and USD comes from the proxy's `x-litellm-response-cost` header, with `embed_usd_per_mtok` as the fallback.
 
@@ -125,21 +137,50 @@ The reranker is the only non-trivial cost in retrieval, and it runs on CPU. Meas
   the 40 golden `/search` calls. `rerank_threshold` is 0.8, and `CORPUS_VERSION` moved to "2" so no
   answer cached under the old reranker is served.
 
+**Retrieval as of session C**:
+- The lexical candidates match and rank on `setweight(to_tsvector(documents.title), 'A') ||
+  chunks.tsv`. It is computed per query, outside the GIN index, which is fine at about 1.5k chunks.
+- The cross-encoder scores `"{document title}\n{chunk text}"`. A short spec section
+  ("## Power / 24 VDC (20 W max)") rarely names its product, and sibling catalog sheets repeat
+  sections word for word, so without the title the reranker cannot tell them apart.
+- `rerank_threshold` is re-tuned from 0.5 to 0.7. Every answerable golden row now tops out at 0.93
+  or above, and every must-abstain row at 0.53 or below (`data/top20_questions.md`).
+- `/search` also passes the per-IP limiter. It redacts the question before the query embedding
+  and stores only the redacted text.
+
 **As built (session B)**, `src/bas_assistant/agent/api.py` and `agent/turn.py`:
 1. `X-Demo-Role` header through A's `api/roles.demo_role` (default support, 422 if unrecognised) → seeded demo user, `acl_groups`, tool allowlist (`tools_for_role`).
 2. An existing `thread_id` must belong to that role's user (404 otherwise, so one role never sees another's history) and must not be waiting at the gate (409). `GET /threads/{id}/history` applies the same ownership check.
 3. Global daily USD cap: sum of today's (UTC) `usage.usd` ≥ `DAILY_USD_CAP` → 503 `{reason: "daily_budget_reached", resets_at}`.
 4. Cache check, first question of a thread only (follow-ups depend on history). A hit costs $0 and skips step 5.
 5. Daily allowance: `USER_DAILY_QUESTIONS` (default 50) per user per UTC day, Redis counter → 429 `daily_allowance_used` with `Retry-After`. With no login every visitor of a role is the same demo user, so in the demo this is a per-role quota; per-visitor limiting is session C's per-IP limiter.
-6. `requests` row; the stored question passes through `logging.redact` (emails and key shapes only until Presidio lands in C).
+6. `requests` row. Since C, the question is redacted by Presidio in `open_turn` before the cache lookup, and nothing downstream sees the raw text: not the row, the checkpoints, the history or the models. `prompt_version` is stored on the row, and an `input_redacted` audit row counts the entities per type.
 7. Graph (section 5). A gateway failure after all fallbacks → 503 `model_unavailable`, request `failed`, allowance refunded (to the day it was taken). An answer the validator rejects keeps its place in the allowance, since its model calls were billed.
 8. `requests` updated with route, decision, latency, retrieval and rerank ms; `request_chunks` written for the passages the graph read (rank, score, `used_in_answer` = cited); answered or abstained first turns are cached.
 
 `POST /ask/stream` takes the same path and sends SSE events: `node` as each node finishes, then `answer`. Answer tokens are not streamed, because nothing reaches the user before `validate` passes it.
 
+**As built (session C)**, in the order a request meets them:
+0. The per-IP sliding window (`guardrails/limits.per_ip_limit`, a route dependency on `/ask`,
+   `/ask/stream`, `/approve` and `/search`, so it runs before any row is written). The limit is
+   `IP_RATE_LIMIT` requests per minute (default 20) → 429 `rate_limited`.
+   It keys on `request.client.host`. Behind Caddy that is one shared address until uvicorn trusts
+   the proxy's `X-Forwarded-For` (`FORWARDED_ALLOW_IPS`, session E).
+- Every limit answers `detail = {reason, message, resets_at}` with `Retry-After` when it can:
+  - `rate_limited` (429)
+  - `daily_allowance_used` (429)
+  - `daily_budget_reached` (503)
+  - `key_budget_reached` (429: LiteLLM's `budget_exceeded` refusal of the virtual key)
+  - `model_unavailable` (503)
+- `/ask/stream` sends the same dict as its `error` event.
+- Audit rows `rate_limited` (once per burst), `daily_cap_reached` and `allowance_used` have no
+  request id.
+- Every closed request writes an audit `decision` row with decision, route and prompt_version,
+  cache hits included.
+
 Since session D, any error in `/ask` or `/ask/stream` closes the request as `failed` (and refunds the allowance) before the error propagates, so crashes show up in metrics and on the dashboards. Before, only gateway failures did.
 
-**Deferred**: Presidio and input rails, per-IP limit (C); API keys for Slack / n8n / MCP (post-weekend).
+**Deferred**: API keys for Slack / n8n / MCP (post-weekend).
 
 ---
 
@@ -184,9 +225,34 @@ decision, errors[], usage_so_far
 - **Checkpoints**: `PostgresSaver` with a msgpack allowlist of the state classes (`graph.CHECKPOINT_SERDE`), so a checkpoint can only rebuild those types. A thread paused at the gate survives an app restart (integration test).
 - **Memory**: the last 6 turns go into the answer prompt; `GET /threads/{id}/history` returns all turns.
 
+**As built (session C)**:
+- **Graph**: `screen → (refuse | route)`, `route → (refuse | retrieve)`, `refuse → finish`. Two new
+  nodes; the model still makes two decisions.
+- **screen**: code only, $0. A narrow regex list of instruction-override phrasings
+  (`guardrails/input.injection_pattern`). "ignore the wiring instructions" is not one of them.
+- **route**: the router call also returns `is_injection`, `is_off_topic` and `reason`, with
+  `max_tokens` 120. Off-topic means nothing to do with building automation or the company;
+  refund, policy and support questions are on topic, and abstain when the docs do not cover them.
+- **refuse**: decision `refused` with a fixed plain message per kind, and an `input_refused`
+  audit row (rail `pattern|model`, kind, reason). The model's reason is never shown, and a
+  refusal is not cached. State gains `refusal`, `refusal_rail` and `refusal_reason`.
+- **retrieve**: takes `acl_groups` from `acl_groups_for_role(role)` and raises `PermissionError`
+  if the user context disagrees.
+- **validate**: the validator moved to `guardrails/output.py`. It adds a Presidio scan of the
+  answer and ticket text: an email, phone, person or street address that no retrieved passage
+  contains is a violation. The violation names the type, not the value. Public contact details
+  quoted from the docs pass.
+- **Prompts**: `agent/prompts/` holds `answer_system.md`, `ticket_rule.md`, `no_ticket_rule.md`
+  and `router.md`. `PROMPT_VERSION` is the first 12 hex characters of the sha256 over them. It is
+  recorded on `requests` and `eval_runs`, and is part of the answer-cache key, so a prompt edit
+  invalidates cached answers.
+- **/approve**: needs the admin token and an `X-Demo-Role` whose tools include `approve_ticket`
+  (admin only); otherwise 403 and an `approve_refused` audit row. The approver id is that role's
+  demo user.
+
 Since session D the six work nodes run inside a trace span each (`graph.traced`), and request metrics are counted where the API closes the request row (`records.close_request`), not in `finish`, because cache hits never enter the graph (§8).
 
-**Deferred**: Jira in `act` (post-weekend); tool allowlist at `/approve` beyond the admin token (C); the MCP server.
+**Deferred**: Jira in `act` (post-weekend); the MCP server.
 
 ---
 
@@ -222,9 +288,11 @@ Since the session B merge this holds for embeddings too: session A's `EmbeddingP
 - **Controls built**: (1) virtual keys `dev` ($5 / 30 days) and `service` ($2 / 30 days), registered by `make litellm-keys`; the per-channel keys wait for those channels. (2) Allowance of 50 questions per user per UTC day (per role in the demo; cache hits are free), refunded only when the models are unavailable; global daily cap `DAILY_USD_CAP` (default $3) → 503. (3) `max_tokens` 60 for the router, 700 for the answer; 6 turns of history. (4) Exact-match cache, 24 h TTL, key = normalized question + role + `CORPUS_VERSION`. (5) Prompt caching is configured on the Claude deployment (`cache_control_injection_points`) but inactive: the system prompt is about 300 tokens, under Anthropic's 1,024-token minimum, and live receipts show `cached_tokens` 0. (6) Routing.
 - LiteLLM also logs every call with its cost in `LiteLLM_SpendLogs` (database `litellm`).
 
+Since session C, a LiteLLM key-budget refusal (429, error type `budget_exceeded`, checked live with a `max_budget: 0` key) raises `KeyBudgetError` and returns 429 `key_budget_reached`. The allowance is refunded. RAGAS judge calls are written as `usage` rows with stage `judge` and no request id, so the daily cap counts them.
+
 **Reporting as built (session D)**: the Budget dashboard (§11) reads `usage`, `requests` and `budgets` through the `dash_*` views: spend today against the enforced cap, month-to-date against the $5 key budget with a linear month-end projection, cost per answer, cost by model and stage, cost per user and team, cache hit rate, and USD per hour by model from Prometheus. Alerts fire at 50, 80 and 100% of the daily cap.
 
-**Deferred**: a LiteLLM key-budget refusal surfaces as 503 `model_unavailable`, not 429; `docs/cost-model.md` (E); per-request ($0.10) and hourly-spike cost alerts; per-team budgets (the Budget dashboard groups by `users.team`, but every demo user is team `default`).
+**Deferred**: `docs/cost-model.md` (E); per-request ($0.10) and hourly-spike cost alerts; per-team budgets (the Budget dashboard groups by `users.team`, but every demo user is team `default`).
 
 ---
 
@@ -239,7 +307,21 @@ Since the session B merge this holds for embeddings too: session A's `EmbeddingP
 | Action | `human_gate` | no write without admin approval; scoped Jira token | support cannot reach `act` |
 | Audit | everywhere | append-only rows; no raw PII | every red-team case has an audit row |
 
-Red-team suite runs on every PR. OWASP LLM Top 10 → control mapping lives in `docs/security.md`.
+**As built (session C)**: every fence above exists. `docs/security.md` has the table with file
+locations and tests, and the OWASP LLM Top 10 (2025) mapping.
+- The red-team suite (`tests/redteam/`, `make redteam`) runs against the live stack, locally
+  only, because CI makes no LLM calls. Last live run: 6/6 on Sep 27 (`outputs/HANDOFF_C.md`;
+  the latest golden run, 21/22, is in `eval/results/latest.md`). Cases:
+  - direct injection
+  - instructions planted in a document (the case checks that the planted chunk was retrieved)
+  - an image-exfiltration request
+  - PII in the question: checked absent from the requests row, the audit detail, the checkpoints,
+    the history and the `app`/`litellm` container logs
+  - support asking for a ticket and trying `/approve`
+  - off-topic
+- Each case asserts an audit row, and the run writes an `eval_runs` row with kind `redteam`.
+- The unit tier mirrors each fence with the fake LLM, and CI runs that on every PR.
+- Deferred: a larger NER model, and PII expiry for LiteLLM's spend logs (see `docs/security.md`).
 
 ---
 
@@ -269,7 +351,7 @@ Red-team suite runs on every PR. OWASP LLM Top 10 → control mapping lives in `
   - Labels never carry ids or users. Per-user numbers come from Postgres.
 - **Grafana** 13.2 at `/grafana` (127.0.0.1:3000):
   - Anonymous Viewer, embedding allowed, sub-path serving, Explore off, admin password from env.
-  - Data sources: Prometheus, and Postgres as `grafana_reader`, a role that can select only the panel views from migration 0004. Anonymous viewers can send any SQL through a data source, so the role is the boundary: no readable view exposes a question, answer, flag reason, email or id. The role has 5 connections, Grafana at most 4, and a 5 s statement timeout.
+  - Data sources: Prometheus, and Postgres as `grafana_reader`, a role that can select only the panel views from migration 0005. Anonymous viewers can send any SQL through a data source, so the role is the boundary: no readable view exposes a question, answer, flag reason, email or id. The role has 5 connections, Grafana at most 4, and a 5 s statement timeout.
   - Grafana's container reads only `~/.bas-assistant-grafana.env` (its admin and reader passwords), never the vendor keys, because it is the one publicly reachable service.
   - Two provisioned, read-only dashboards: **Budget** (`bas-budget`) and **Quality & adoption** (`bas-quality`, including hourly p50/p95 `rerank_ms`); panels in §11.
   - Five alert rules: API 5xx share above 5%, p95 answer latency above 8 s, and daily spend at 50, 80 and 100% of the cap. The error-rate rule also counts the daily-cap 503, so a tripped cap fires it alongside the 100% rule. `bas_requests_total` counts a request when it first closes, so a gated request stays `paused` there; `/approve` updates only the row, which the Postgres panels read.
@@ -288,6 +370,36 @@ Red-team suite runs on every PR. OWASP LLM Top 10 → control mapping lives in `
 5. **Red team**: pytest suite, every PR.
 6. **Load**: k6, 20 virtual users, 2 minutes, recorded in `docs/performance.md`.
 7. **Closing the loop**: every flagged answer (section 10) becomes a new golden-set row. Prompts are versioned in git; a prompt change ships only with evals passing.
+
+**As built (session C)**: `make eval` runs the golden set, then RAGAS.
+- **Case file**: `eval/golden.jsonl` is generated from the table in `data/top20_questions.md` by
+  `python -m bas_assistant.evals.golden`. A unit test keeps the two in sync.
+- **Golden run** (`tests/eval/test_golden.py`): asks each case through the live `/ask`, with the
+  cache entry dropped first. Rows 1–18 are asked as support, rows 19–20 as support and engineer:
+  22 calls.
+  - An answer row passes when the decision is `answered` and a citation's `source_url` contains the
+    expected product key.
+  - An abstain row passes when the decision is `abstained` with no citations.
+  - Per-case results go to `eval/results/golden-latest.jsonl` (gitignored).
+- **RAGAS** (`eval/ragas_run.py`, dev only; judge metering, category means and the summary are in
+  `evals/scoring.py`, which is unit-tested): faithfulness, answer relevancy, context precision (with
+  reference) and context recall over the answered rows.
+  - The contexts are the parents the answer model read (`request_chunks` → `parents`). The
+    reference is the expected fact.
+  - Judge: the `fast` alias. Embeddings: the `embed` alias. Both go through langchain-openai at
+    the LiteLLM proxy with the app's virtual key.
+  - httpx hooks meter each judge call as a `usage` row (stage `judge`). The rows are written even
+    when RAGAS fails halfway. RAGAS telemetry is off (`RAGAS_DO_NOT_TRACK`).
+  - It writes an `eval_runs` row with kind `golden`. Its `scores` document is
+    `{run_at, corpus_version, golden: {passed, total, rate}, failures, overall: {n, faithfulness,
+    answer_relevancy, context_precision, context_recall}, by_category: {<category>: same}}`.
+    `overall` and `by_category` are what session D's Quality & adoption dashboard reads. Cost is
+    the golden answers' usage plus the judge usage.
+  - It also writes `eval/results/latest.md`, which make prints.
+- **`GET /evals/latest`** returns the newest `golden` and `redteam` runs for the Evals tab.
+- **Red team**: section 7.
+- **Deferred**: promptfoo, the LangSmith dataset and k6 (out of weekend scope). Flag-to-golden-row
+  is a manual step.
 
 ---
 
@@ -373,7 +485,7 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
 | Postgres down | app returns 503; no partial writes (transactions) |
 | Corpus changed | nightly re-index; corpus_version bumps; cache invalidated |
 
-**As built (session B)**: strong model down (the proxy falls back to gpt-4o, then to the `fast` group; if everything fails, 503 `model_unavailable` with the request `failed` and the allowance refunded; the fallbacks were verified live by forcing the primaries to fail); fabricated citation (retry, then fail closed); user over budget (429 with `Retry-After`; daily cap 503 with `resets_at`). Retrieval finding nothing abstains without an answer call, but not at exactly $0: the router call comes before retrieval (about $0.00003). Not built yet: Jira, the Postgres-down 503, corpus-change invalidation beyond the `CORPUS_VERSION` setting.
+**As built (session B)**: strong model down (the proxy falls back to gpt-4o, then to the `fast` group; if everything fails, 503 `model_unavailable` with the request `failed` and the allowance refunded; the fallbacks were verified live by forcing the primaries to fail); fabricated citation (retry, then fail closed); user over budget (429 with `Retry-After`; daily cap 503 with `resets_at`). Session C: virtual-key budget spent → 429 `key_budget_reached`, request `failed`, allowance refunded; a crawl fetch that fails is retried with backoff, then skipped with its URL logged. Retrieval finding nothing abstains without an answer call, but not at exactly $0: the router call comes before retrieval (about $0.00003). Not built yet: Jira, the Postgres-down 503, corpus-change invalidation beyond the `CORPUS_VERSION` setting.
 
 ---
 

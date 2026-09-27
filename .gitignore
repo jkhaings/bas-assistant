@@ -10,6 +10,8 @@ data/raw/
 
 # outputs
 outputs/*.png
+# raw per-question eval results; eval/results/latest.md is the committed summary
+eval/results/*.jsonl
 
 # keys / certs
 *.pem

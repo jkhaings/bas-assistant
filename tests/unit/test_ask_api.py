@@ -12,7 +12,9 @@ from sqlalchemy.pool import StaticPool
 from bas_assistant.api.ask import get_retrieval_deps
 from bas_assistant.db.activity import Request, RequestChunk, Thread, Usage, User
 from bas_assistant.db.engine import Base, get_session
+from bas_assistant.guardrails.limits import per_ip_limit
 from bas_assistant.main import app
+from bas_assistant.retrieval.embeddings import EmbedBatch
 from bas_assistant.retrieval.pipeline import RetrievalDeps
 from tests.fakes import (
     FakeEmbedder,
@@ -82,6 +84,8 @@ def client(db_session: Session) -> Iterator[TestClient]:
     )
     app.dependency_overrides[get_session] = lambda: db_session
     app.dependency_overrides[get_retrieval_deps] = lambda: deps
+    # The limiter needs the app runtime's Redis; test_limits.py covers it.
+    app.dependency_overrides[per_ip_limit] = lambda: None
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -164,4 +168,24 @@ def test_ask_never_logs_the_raw_question(client: TestClient, db_session: Session
     saved = db_session.get(Request, request_id)
     assert saved is not None
     assert "jason@example.com" not in saved.question_redacted
-    assert "[REDACTED]" in saved.question_redacted
+    assert "<EMAIL_ADDRESS>" in saved.question_redacted
+
+
+class _RecordingEmbedder(FakeEmbedder):
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    def embed(self, texts: list[str]) -> EmbedBatch:
+        self.texts.extend(texts)
+        return super().embed(texts)
+
+
+def test_search_embeds_only_the_redacted_question(client: TestClient) -> None:
+    embedder = _RecordingEmbedder()
+    app.dependency_overrides[get_retrieval_deps] = lambda: RetrievalDeps(
+        embedder=embedder, store=FakeVectorStore([]), reranker=fake_reranker, rerank_threshold=0.1
+    )
+
+    client.post("/search", json={"question": "jason@example.com: power draw?"})
+
+    assert embedder.texts == ["<EMAIL_ADDRESS>: power draw?"]

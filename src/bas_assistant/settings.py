@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # Non-secret operational config. URL defaults are the docker compose service names.
     daily_usd_cap: Decimal = Decimal("3")
     user_daily_questions: int = 50
+    # Per IP per minute. Every visitor of a role shares its demo user, so this is the
+    # per-visitor control on the public link.
+    ip_rate_limit: int = 20
     # Part of the answer-cache key: bump when the corpus or the retrieval over it changes, so
     # no stale answer survives ("2": the session D reranker).
     corpus_version: str = "2"
@@ -65,12 +68,10 @@ class Settings(BaseSettings):
     embed_usd_per_mtok: Decimal = Decimal("0.02")
 
     # Retrieval. MiniLM replaced bge-reranker-base in session D: 13-20 s per question on
-    # the container's CPU against a 3 s budget (docs/adr/0003-reranker.md).
+    # the container's CPU against a 3 s budget (docs/adr/0003-reranker.md). It reads each
+    # chunk with its document title (session C).
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    # Tuned in session D on the golden set (data/top20_questions.md): with MiniLM the
-    # answerable questions' top score was 0.87-1.00 and the out-of-scope ones 0.00-0.72.
-    # Below this, /ask abstains before any answer call.
-    # TODO(session C): confirm with the golden eval; tuned on 20 rows (docs/adr/0003-reranker.md).
+    # THRESHOLD_PENDING
     rerank_threshold: float = 0.8
 
     @property

@@ -1,4 +1,5 @@
-"""route -> retrieve -> (abstain | answer -> validate) -> (propose_ticket -> human_gate -> act) -> finish"""
+"""screen -> route -> retrieve -> (abstain | answer -> validate) -> (propose_ticket -> human_gate
+-> act) -> finish, with screen or route going to refuse -> finish when the input rail trips."""
 
 from typing import Protocol
 
@@ -30,7 +31,17 @@ class Node(Protocol):
 
 
 # What a node decided, never what it read or wrote: no question, passage or answer text.
-SPAN_FIELDS = ("route", "decision", "attempts", "retrieval_ms", "rerank_ms", "approval")
+# refusal_reason stays out: it is the router model's words about the question.
+SPAN_FIELDS = (
+    "route",
+    "decision",
+    "refusal",
+    "refusal_rail",
+    "attempts",
+    "retrieval_ms",
+    "rerank_ms",
+    "approval",
+)
 COUNTED_FIELDS = ("retrieved", "validation_errors")
 
 
@@ -62,7 +73,9 @@ def traced(name: str, node: Node) -> Node:
 
 def build_graph(checkpointer: BaseCheckpointSaver[str]) -> Graph:
     graph = StateGraph(AgentState, context_schema=AgentContext)
+    graph.add_node("screen", nodes.screen)
     graph.add_node("route", traced("route", nodes.route))
+    graph.add_node("refuse", traced("refuse", nodes.refuse))
     graph.add_node("retrieve", traced("retrieve", nodes.retrieve))
     graph.add_node("abstain", nodes.abstain)
     graph.add_node("answer", traced("answer", nodes.answer))
@@ -72,8 +85,10 @@ def build_graph(checkpointer: BaseCheckpointSaver[str]) -> Graph:
     graph.add_node("act", traced("act", nodes.act))
     graph.add_node("finish", nodes.finish)
 
-    graph.add_edge(START, "route")
-    graph.add_edge("route", "retrieve")
+    graph.add_edge(START, "screen")
+    graph.add_conditional_edges("screen", nodes.after_screen)
+    graph.add_conditional_edges("route", nodes.after_route)
+    graph.add_edge("refuse", "finish")
     graph.add_conditional_edges("retrieve", nodes.after_retrieve)
     graph.add_edge("abstain", "finish")
     graph.add_edge("answer", "validate")

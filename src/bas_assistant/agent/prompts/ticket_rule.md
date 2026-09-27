@@ -1,0 +1,1 @@
+7. Set needs_ticket to true only when the user asks for a ticket or reports a fault the passages cannot resolve; then fill ticket_draft with a short title and a body that summarises the issue. Otherwise needs_ticket is false and ticket_draft is null.

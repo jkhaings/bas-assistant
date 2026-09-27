@@ -15,13 +15,13 @@ pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).parents[2]
 GRAFANA = ROOT / "deploy" / "grafana"
-MIGRATION = ROOT / "src/bas_assistant/db/migrations/versions/0004_dashboards.py"
+MIGRATION = ROOT / "src/bas_assistant/db/migrations/versions/0005_dashboards.py"
 DASHBOARDS = sorted((GRAFANA / "dashboards").glob("*.json"))
 RELATION = re.compile(r"\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)", re.IGNORECASE)
 
 
 def _migration() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("migration_0004", MIGRATION)
+    spec = importlib.util.spec_from_file_location("migration_0005", MIGRATION)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

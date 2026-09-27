@@ -30,7 +30,7 @@ def test_stream_reports_each_node_then_the_answer(client: TestClient) -> None:
     events = _events(client, "Power draw?")
 
     nodes = [data["node"] for name, data in events if name == "node"]
-    assert nodes == ["route", "retrieve", "answer", "validate", "finish"]
+    assert nodes == ["screen", "route", "retrieve", "answer", "validate", "finish"]
     name, answer = events[-1]
     assert name == "answer"
     assert answer["decision"] == "answered"
@@ -53,5 +53,8 @@ def test_model_outage_mid_stream_sends_an_error_and_refunds_the_question(
     events = _events(client, "Power draw?")
     proxy.down = set()
 
-    assert events == [("error", {"reason": "model_unavailable"})]
+    # screen is code only, so its node event arrives before the router call fails.
+    assert events[0] == ("node", {"node": "screen"})
+    assert events[-1][0] == "error"
+    assert events[-1][1]["reason"] == "model_unavailable"
     assert ask(client, "Power draw?").status_code == 200

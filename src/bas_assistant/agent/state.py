@@ -9,12 +9,13 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from bas_assistant.llm.gateway import Usage
-from bas_assistant.llm.router import Route
+from bas_assistant.llm.router import RefusalKind, Route
 
 # The values of api.roles.Role; a plain string keeps checkpoints free of enum classes.
 RoleName = Literal["support", "engineer", "admin"]
 Decision = Literal["answered", "abstained", "refused", "paused", "failed"]
 Approval = Literal["none", "pending", "approved", "rejected"]
+Rail = Literal["pattern", "model"]
 
 
 class Passage(BaseModel):
@@ -83,6 +84,9 @@ class AgentState(BaseModel):
     user: UserContext
     route: Route | None = None
     topic: str = ""
+    refusal: RefusalKind | None = None
+    refusal_rail: Rail | None = None
+    refusal_reason: str = ""
     retrieved: list[Passage] = []
     retrieval_ms: int = 0
     rerank_ms: int = 0

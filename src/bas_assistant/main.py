@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from bas_assistant.agent import api as agent_api
 from bas_assistant.agent.corpus import search_corpus
-from bas_assistant.api import ask, documents
+from bas_assistant.api import ask, documents, evals
 from bas_assistant.cost import api as cost_api
 from bas_assistant.cost.budget import sync_daily_cap
 from bas_assistant.feedback import api as feedback_api
@@ -46,6 +46,7 @@ def create_app(lifespan: Lifespan) -> FastAPI:
     app.include_router(feedback_api.router)
     app.include_router(ask.router)
     app.include_router(documents.router)
+    app.include_router(evals.router)
     app.middleware("http")(count_http_requests)
     # One root span per API request; where spans go is decided at startup (langfuse_provider).
     # The ASGI send/receive spans (one per SSE event) would bury the graph's own spans.

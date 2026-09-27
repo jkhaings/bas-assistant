@@ -1,7 +1,6 @@
 """One question through the API: limits, cache, graph run, request row, response."""
 
 import logging
-import math
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from fastapi import HTTPException
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel
 
+from bas_assistant.agent.prompts import PROMPT_VERSION
 from bas_assistant.agent.records import (
     RequestOutcome,
     close_request,
@@ -21,11 +21,13 @@ from bas_assistant.agent.records import (
     thread_owner,
 )
 from bas_assistant.agent.state import AgentState, Decision, Turn, UserContext, turn_input
+from bas_assistant.audit import write_audit
 from bas_assistant.cost.budget import next_reset, refund_allowance, spent_today, take_allowance
 from bas_assistant.cost.cache import cache_key, get_cached, put_cached
 from bas_assistant.cost.usage import record_cache_hit
+from bas_assistant.guardrails.input import redact
+from bas_assistant.guardrails.limits import limit_error
 from bas_assistant.llm.router import Route
-from bas_assistant.logging import redact
 from bas_assistant.observability.metrics import ACTIVE_THREADS, observe_validation
 from bas_assistant.observability.tracing import (
     record_event,
@@ -84,23 +86,32 @@ def thread_config(thread_id: UUID) -> RunnableConfig:
     return {"configurable": {"thread_id": str(thread_id)}}
 
 
-def _check_daily_cap(runtime: AppRuntime, now: datetime) -> None:
-    if spent_today(runtime.agent.engine, now) >= runtime.daily_usd_cap:
-        raise HTTPException(
-            503, detail={"reason": "daily_budget_reached", "resets_at": next_reset(now).isoformat()}
-        )
-
-
-# TODO(session C): every visitor of a role shares its demo user; add the per-IP limiter.
-def _take_allowance(runtime: AppRuntime, user_id: UUID, now: datetime) -> None:
-    if take_allowance(runtime.redis, user_id, runtime.user_daily_questions, now):
+def _check_daily_cap(runtime: AppRuntime, user: UserContext, now: datetime) -> None:
+    if spent_today(runtime.agent.engine, now) < runtime.daily_usd_cap:
         return
-    resets_at = next_reset(now)
-    raise HTTPException(
-        429,
-        detail={"reason": "daily_allowance_used", "resets_at": resets_at.isoformat()},
-        headers={"Retry-After": str(math.ceil((resets_at - now).total_seconds()))},
+    write_audit(
+        runtime.agent.engine,
+        None,
+        actor=user.role,
+        action="daily_cap_reached",
+        detail={"cap_usd": str(runtime.daily_usd_cap)},
     )
+    raise limit_error(503, "daily_budget_reached", next_reset(now))
+
+
+# Every visitor of a role shares its demo user, so this is a per-role quota; the per-IP
+# limiter (guardrails/limits.py) is the per-visitor control.
+def _take_allowance(runtime: AppRuntime, user: UserContext, now: datetime) -> None:
+    if take_allowance(runtime.redis, user.id, runtime.user_daily_questions, now):
+        return
+    write_audit(
+        runtime.agent.engine,
+        None,
+        actor=user.role,
+        action="allowance_used",
+        detail={"limit": runtime.user_daily_questions},
+    )
+    raise limit_error(429, "daily_allowance_used", next_reset(now))
 
 
 def _check_thread(runtime: AppRuntime, thread_id: UUID, user: UserContext) -> None:
@@ -113,7 +124,19 @@ def _check_thread(runtime: AppRuntime, thread_id: UUID, user: UserContext) -> No
 
 
 def _key(runtime: AppRuntime, question: str, user: UserContext) -> str:
-    return cache_key(question, user.role, runtime.corpus_version)
+    return cache_key(question, user.role, runtime.corpus_version, PROMPT_VERSION)
+
+
+def _audit_decision(
+    runtime: AppRuntime, turn: OpenTurn, decision: Decision, route: Route | None
+) -> None:
+    write_audit(
+        runtime.agent.engine,
+        turn.request_id,
+        actor=turn.user.role,
+        action="decision",
+        detail={"decision": decision, "route": route, "prompt_version": PROMPT_VERSION},
+    )
 
 
 def open_turn(
@@ -123,23 +146,33 @@ def open_turn(
     now = datetime.now(UTC)
     if thread_id is not None:
         _check_thread(runtime, thread_id, user)
-    _check_daily_cap(runtime, now)
+    _check_daily_cap(runtime, user, now)
+    # Nothing past this line sees the raw question: not the cache, the requests row, the
+    # checkpoints, the history or any model.
+    redaction = redact(question)
+    question = redaction.text
     # Follow-ups depend on earlier turns, so only a thread's first question is cacheable.
     cached = None
     if thread_id is None:
         cached = get_cached(runtime.redis, _key(runtime, question, user), TurnResult)
     # A cache hit costs nothing, so it does not count against the allowance.
     if cached is None:
-        _take_allowance(runtime, user.id, now)
+        _take_allowance(runtime, user, now)
     new_thread = thread_id is None
     thread_id = thread_id or create_thread(runtime.agent.engine, user.id)
     request_id = uuid4()
-    # TODO(session C): Presidio before storage and before the graph (checkpoints hold it raw).
-    # The trace input is this same string, so redaction reaches Langfuse through one place.
-    question_redacted = redact(question)
-    open_request(runtime.agent.engine, request_id, thread_id, user, question_redacted)
+    open_request(runtime.agent.engine, request_id, thread_id, user, question)
+    if redaction.counts:
+        write_audit(
+            runtime.agent.engine,
+            request_id,
+            actor=user.role,
+            action="input_redacted",
+            detail={"entities": redaction.counts},
+        )
+    # The trace input is the redacted question, the same string as the requests row.
     tag_trace(request_id, thread_id, user.role)
-    set_trace_input(question_redacted)
+    set_trace_input(question)
     return OpenTurn(
         request_id, thread_id, user, question, new_thread, cached, now, time.perf_counter()
     )
@@ -177,6 +210,7 @@ def serve_from_cache(runtime: AppRuntime, turn: OpenTurn, cached: TurnResult) ->
         {"history": [Turn(question=turn.question, answer=cached.answer)]},
         as_node="finish",
     )
+    _audit_decision(runtime, turn, cached.decision, cached.route)
     return _respond(cached, turn, None)
 
 
@@ -235,6 +269,7 @@ def close_turn(runtime: AppRuntime, turn: OpenTurn) -> AskResponse:
     if decision == "paused":
         record_event("gate paused", {"ticket_id": str(state.ticket_id)})
     # A rejected answer still cost model calls, so it keeps its place in the allowance.
+    _audit_decision(runtime, turn, decision, state.route)
     logger.info(
         "request closed decision=%s route=%s",
         decision,
@@ -262,4 +297,5 @@ def fail_turn(runtime: AppRuntime, turn: OpenTurn, reason: str) -> None:
         RequestOutcome(None, "failed", _elapsed_ms(turn), 0, 0),
     )
     refund_allowance(runtime.redis, turn.user.id, turn.opened_at)
+    _audit_decision(runtime, turn, "failed", None)
     logger.warning("request failed: %s", reason, extra={"request_id": str(turn.request_id)})

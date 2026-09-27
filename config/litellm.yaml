@@ -15,7 +15,7 @@ model_list:
       # gemini-2.0-flash and 2.5-flash return 404 (retired) as of Sep 26 2026.
       model: gemini/gemini-3.8-flash
       api_key: os.environ/GEMINI_API_KEY
-      # Default thinking spends the router's 60-token budget before any JSON is written.
+      # Default thinking spends the router's 120-token budget before any JSON is written.
       reasoning_effort: low
     model_info:
       id: gemini/gemini-3.8-flash
@@ -25,7 +25,7 @@ model_list:
       model: anthropic/claude-sonnet-4-6
       api_key: os.environ/ANTHROPIC_API_KEY
       # Prompt caching on the system prompt, only where the alias resolves to Claude.
-      # TODO(session C): inactive until the system prompt passes Anthropic's 1,024-token minimum.
+      # TODO(post-weekend): inactive until the system prompt passes Anthropic's 1,024-token minimum.
       cache_control_injection_points:
         - location: message
           role: system
