@@ -9,6 +9,24 @@ const OPTIONS: { value: FeedbackValue; label: string }[] = [
     { value: "not_used", label: "Not used" },
 ];
 
+type OptionProps = { label: string; pressed: boolean; onPick: () => void };
+
+function FeedbackOption({ label, pressed, onPick }: OptionProps) {
+    const tone = pressed
+        ? "border-accent bg-accent text-white"
+        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100";
+    return (
+        <button
+            type="button"
+            aria-pressed={pressed}
+            onClick={onPick}
+            className={`rounded-full border px-3 py-1 text-xs font-medium ${tone}`}
+        >
+            {label}
+        </button>
+    );
+}
+
 export function FeedbackControl({ requestId }: { requestId: string }) {
     const client = useApi();
     const [selected, setSelected] = useState<FeedbackValue | null>(null);
@@ -34,23 +52,14 @@ export function FeedbackControl({ requestId }: { requestId: string }) {
                 className="flex flex-wrap items-center gap-2"
             >
                 <span className="text-xs text-stone-500">Did you use this answer?</span>
-                {OPTIONS.map(({ value, label }) => {
-                    const pressed = selected === value;
-                    const tone = pressed
-                        ? "border-accent bg-accent text-white"
-                        : "border-stone-300 bg-white text-stone-700 hover:bg-stone-100";
-                    return (
-                        <button
-                            key={value}
-                            type="button"
-                            aria-pressed={pressed}
-                            onClick={() => void vote(value)}
-                            className={`rounded-full border px-3 py-1 text-xs font-medium ${tone}`}
-                        >
-                            {label}
-                        </button>
-                    );
-                })}
+                {OPTIONS.map(({ value, label }) => (
+                    <FeedbackOption
+                        key={value}
+                        label={label}
+                        pressed={selected === value}
+                        onPick={() => void vote(value)}
+                    />
+                ))}
             </div>
             {error && <p className="mt-1 text-xs text-red-700">{error}</p>}
         </div>

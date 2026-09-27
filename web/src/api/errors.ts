@@ -1,11 +1,8 @@
+import { isRecord } from "./guards";
 import { LIMIT_REASONS, type LimitDetail, type LimitReason } from "./types";
 
 export const GENERIC_ERROR = "Something went wrong. Please try again.";
 export const NETWORK_ERROR = "Could not reach the server. Check your connection and try again.";
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isLimitReason(value: unknown): value is LimitReason {
     return LIMIT_REASONS.some((reason) => reason === value);

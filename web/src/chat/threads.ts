@@ -25,18 +25,12 @@ export type ChatAction =
     | { type: "answered"; role: Role; threadKey: string; exchangeId: string; response: AskResponse }
     | { type: "failed"; role: Role; threadKey: string; exchangeId: string; message: string };
 
-let lastKey = 0;
-export function nextKey(): string {
-    lastKey += 1;
-    return `local-${lastKey}`;
-}
-
 function emptyThread(key: string): ChatThread {
     return { key, threadId: null, exchanges: [] };
 }
 
 function freshRole(): RoleThreads {
-    const key = nextKey();
+    const key = crypto.randomUUID();
     return { threads: [emptyThread(key)], activeKey: key };
 }
 

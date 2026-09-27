@@ -1,37 +1,66 @@
 import type { Ticket } from "../../api/types";
+import { useTicketDecisions, type TicketDecisions } from "../../hooks/useTicketDecisions";
 import { useTickets } from "../../hooks/useTickets";
 import { TicketCard } from "./TicketCard";
+
+type SectionProps = {
+    id: string;
+    title: string;
+    tickets: Ticket[];
+    empty: string;
+    decisions: TicketDecisions;
+};
+
+function TicketSection({ id, title, tickets, empty, decisions }: SectionProps) {
+    return (
+        <section aria-labelledby={id} className="space-y-3">
+            <h2 id={id} className="text-base font-semibold">
+                {title}
+            </h2>
+            {tickets.length === 0 && <p className="text-sm text-stone-500">{empty}</p>}
+            {tickets.map((ticket) => (
+                <TicketCard
+                    key={ticket.id}
+                    ticket={ticket}
+                    busy={decisions.busyId === ticket.id}
+                    error={decisions.cardErrors[ticket.id] ?? null}
+                    onDecide={(approve) => decisions.decide(ticket, approve)}
+                />
+            ))}
+        </section>
+    );
+}
+
+type WaitingAndHistoryProps = { tickets: Ticket[]; decisions: TicketDecisions };
+
+function WaitingAndHistory({ tickets, decisions }: WaitingAndHistoryProps) {
+    const waiting = tickets.filter((ticket) => ticket.status === "proposed");
+    const history = tickets.filter((ticket) => ticket.status !== "proposed");
+    return (
+        <>
+            <TicketSection
+                id="waiting"
+                title={`Waiting for approval (${waiting.length})`}
+                tickets={waiting}
+                empty="No tickets are waiting."
+                decisions={decisions}
+            />
+            <TicketSection
+                id="history"
+                title="History"
+                tickets={history}
+                empty="No decisions yet."
+                decisions={decisions}
+            />
+        </>
+    );
+}
 
 type Props = { token: string; onTokenRejected: () => void };
 
 export function TicketBoard({ token, onTokenRejected }: Props) {
-    const { tickets, loadError, busyId, cardErrors, lastDecision, reload, decide } = useTickets(
-        token,
-        onTokenRejected,
-    );
-
-    function ticketSection(id: string, title: string, list: Ticket[], empty: string) {
-        return (
-            <section aria-labelledby={id} className="space-y-3">
-                <h2 id={id} className="text-base font-semibold">
-                    {title}
-                </h2>
-                {list.length === 0 && <p className="text-sm text-stone-500">{empty}</p>}
-                {list.map((ticket) => (
-                    <TicketCard
-                        key={ticket.id}
-                        ticket={ticket}
-                        busy={busyId === ticket.id}
-                        error={cardErrors[ticket.id] ?? null}
-                        onDecide={(approve) => decide(ticket, approve)}
-                    />
-                ))}
-            </section>
-        );
-    }
-
-    const waiting = tickets?.filter((ticket) => ticket.status === "proposed") ?? [];
-    const history = tickets?.filter((ticket) => ticket.status !== "proposed") ?? [];
+    const { tickets, loadError, reload, setStatus } = useTickets(token, onTokenRejected);
+    const decisions = useTicketDecisions(token, onTokenRejected, setStatus);
 
     return (
         <div className="space-y-6">
@@ -44,7 +73,7 @@ export function TicketBoard({ token, onTokenRejected }: Props) {
                     Refresh
                 </button>
                 <p aria-live="polite" className="text-sm text-emerald-800">
-                    {lastDecision}
+                    {decisions.lastDecision}
                 </p>
             </div>
             {loadError && (
@@ -55,17 +84,7 @@ export function TicketBoard({ token, onTokenRejected }: Props) {
             {tickets === null && !loadError && (
                 <p className="text-sm text-stone-500">Loading tickets</p>
             )}
-            {tickets && (
-                <>
-                    {ticketSection(
-                        "waiting",
-                        `Waiting for approval (${waiting.length})`,
-                        waiting,
-                        "No tickets are waiting.",
-                    )}
-                    {ticketSection("history", "History", history, "No decisions yet.")}
-                </>
-            )}
+            {tickets && <WaitingAndHistory tickets={tickets} decisions={decisions} />}
         </div>
     );
 }

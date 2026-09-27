@@ -5,14 +5,31 @@ import type { Role } from "../api/types";
 import {
     activeThread,
     isStreaming,
-    nextKey,
     type ChatAction,
     type ChatState,
+    type ChatThread,
 } from "../chat/threads";
 import { Composer } from "../components/chat/Composer";
 import { ExchangeView } from "../components/chat/ExchangeView";
 import { StarterQuestions } from "../components/chat/StarterQuestions";
 import { ThreadList } from "../components/chat/ThreadList";
+
+type ConversationProps = { thread: ChatThread; busy: boolean; onAsk: (question: string) => void };
+
+function Conversation({ thread, busy, onAsk }: ConversationProps) {
+    return (
+        <section aria-label="Conversation" className="min-w-0 space-y-6">
+            {thread.exchanges.length === 0 ? (
+                <StarterQuestions busy={busy} onPick={onAsk} />
+            ) : (
+                thread.exchanges.map((exchange) => (
+                    <ExchangeView key={exchange.id} exchange={exchange} />
+                ))
+            )}
+            <Composer busy={busy} onAsk={onAsk} />
+        </section>
+    );
+}
 
 type Props = {
     role: Role;
@@ -28,7 +45,7 @@ export function ChatPage({ role, chat, dispatch, onAskFinished }: Props) {
     const busy = isStreaming(thread);
 
     async function ask(question: string) {
-        const target = { role, threadKey: thread.key, exchangeId: nextKey() };
+        const target = { role, threadKey: thread.key, exchangeId: crypto.randomUUID() };
         dispatch({ type: "asked", ...target, question });
         const outcome = await askStream(client, { question, thread_id: thread.threadId }, (node) =>
             dispatch({ type: "step", ...target, node }),
@@ -47,18 +64,9 @@ export function ChatPage({ role, chat, dispatch, onAskFinished }: Props) {
                 threads={roleThreads.threads}
                 activeKey={roleThreads.activeKey}
                 onSelect={(key) => dispatch({ type: "selectThread", role, key })}
-                onNew={() => dispatch({ type: "newThread", role, key: nextKey() })}
+                onNew={() => dispatch({ type: "newThread", role, key: crypto.randomUUID() })}
             />
-            <section aria-label="Conversation" className="min-w-0 space-y-6">
-                {thread.exchanges.length === 0 ? (
-                    <StarterQuestions busy={busy} onPick={(question) => void ask(question)} />
-                ) : (
-                    thread.exchanges.map((exchange) => (
-                        <ExchangeView key={exchange.id} exchange={exchange} />
-                    ))
-                )}
-                <Composer busy={busy} onAsk={(question) => void ask(question)} />
-            </section>
+            <Conversation thread={thread} busy={busy} onAsk={(question) => void ask(question)} />
         </div>
     );
 }

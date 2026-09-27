@@ -10,6 +10,39 @@ function usd(value: number): string {
 
 const CELL = "px-2 py-1 text-left whitespace-nowrap";
 
+function ReceiptCalls({ calls }: { calls: Receipt["calls"] }) {
+    return (
+        <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+                <caption className="sr-only">Model calls for this answer</caption>
+                <thead className="border-b border-stone-200 text-stone-500">
+                    <tr>
+                        <th className={CELL}>Stage</th>
+                        <th className={CELL}>Model</th>
+                        <th className={CELL}>Tokens in / out</th>
+                        <th className={CELL}>USD</th>
+                        <th className={CELL}>Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {calls.map((call, index) => (
+                        <tr key={`${index}-${call.stage}`} className="border-b border-stone-100">
+                            <td className={CELL}>{call.stage}</td>
+                            <td className={CELL}>{call.model}</td>
+                            <td className={CELL}>
+                                {call.input_tokens.toLocaleString()} /{" "}
+                                {call.output_tokens.toLocaleString()}
+                            </td>
+                            <td className={CELL}>{usd(call.usd)}</td>
+                            <td className={CELL}>{ms(call.latency_ms)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
 export function ReceiptDetails({ receipt }: { receipt: Receipt }) {
     return (
         <div className="space-y-3">
@@ -34,37 +67,7 @@ export function ReceiptDetails({ receipt }: { receipt: Receipt }) {
                 <dt className="text-stone-500">Cache hit</dt>
                 <dd>{receipt.cache_hit ? "yes" : "no"}</dd>
             </dl>
-            <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                    <caption className="sr-only">Model calls for this answer</caption>
-                    <thead className="border-b border-stone-200 text-stone-500">
-                        <tr>
-                            <th className={CELL}>Stage</th>
-                            <th className={CELL}>Model</th>
-                            <th className={CELL}>Tokens in / out</th>
-                            <th className={CELL}>USD</th>
-                            <th className={CELL}>Time</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {receipt.calls.map((call, index) => (
-                            <tr
-                                key={`${index}-${call.stage}`}
-                                className="border-b border-stone-100"
-                            >
-                                <td className={CELL}>{call.stage}</td>
-                                <td className={CELL}>{call.model}</td>
-                                <td className={CELL}>
-                                    {call.input_tokens.toLocaleString()} /{" "}
-                                    {call.output_tokens.toLocaleString()}
-                                </td>
-                                <td className={CELL}>{usd(call.usd)}</td>
-                                <td className={CELL}>{ms(call.latency_ms)}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+            <ReceiptCalls calls={receipt.calls} />
         </div>
     );
 }

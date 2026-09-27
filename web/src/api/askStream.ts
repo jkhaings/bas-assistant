@@ -1,6 +1,7 @@
-import { createParser, type EventSourceMessage } from "eventsource-parser";
+import { EventSourceParserStream, type EventSourceMessage } from "eventsource-parser/stream";
 import type { ApiClient } from "./client";
-import { GENERIC_ERROR, describeError, isRecord } from "./errors";
+import { GENERIC_ERROR, describeError } from "./errors";
+import { isRecord } from "./guards";
 import { settle } from "./settle";
 import type { AskResponse } from "./types";
 
@@ -27,19 +28,17 @@ function outcomeOf(message: EventSourceMessage, onNode: (node: string) => void):
 }
 
 async function readOutcome(
-    stream: ReadableStream<Uint8Array>,
+    stream: ReadableStream<Uint8Array<ArrayBuffer>>,
     onNode: (node: string) => void,
 ): Promise<AskOutcome> {
+    // A reader rather than `for await`: Safari cannot async-iterate a ReadableStream.
+    const events = stream
+        .pipeThrough(new TextDecoderStream())
+        .pipeThrough(new EventSourceParserStream())
+        .getReader();
     let outcome = NO_ANSWER;
-    const parser = createParser({
-        onEvent: (message) => {
-            outcome = outcomeOf(message, onNode) ?? outcome;
-        },
-    });
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
-        parser.feed(decoder.decode(chunk.value, { stream: true }));
+    for (let next = await events.read(); !next.done; next = await events.read()) {
+        outcome = outcomeOf(next.value, onNode) ?? outcome;
     }
     return outcome;
 }

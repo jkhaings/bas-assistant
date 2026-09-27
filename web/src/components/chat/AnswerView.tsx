@@ -1,4 +1,4 @@
-import type { AskResponse } from "../../api/types";
+import type { AskResponse, Citation } from "../../api/types";
 import { CitationCard } from "./CitationCard";
 import { CostToggle } from "./CostToggle";
 import { DecisionBadge } from "./DecisionBadge";
@@ -19,6 +19,21 @@ function TicketCallout({ ticketId }: { ticketId: string | null }) {
             </a>
             .
         </p>
+    );
+}
+
+function Sources({ citations }: { citations: Citation[] }) {
+    return (
+        <section aria-label="Sources">
+            <h3 className="mb-2 text-xs font-semibold tracking-wide text-stone-500 uppercase">
+                Sources
+            </h3>
+            <ul className="grid gap-2 md:grid-cols-2">
+                {citations.map((citation) => (
+                    <CitationCard key={citation.chunk_id} citation={citation} />
+                ))}
+            </ul>
+        </section>
     );
 }
 
@@ -43,18 +58,7 @@ export function AnswerView({ response }: { response: AskResponse }) {
                     ))}
                 </ul>
             )}
-            {response.citations.length > 0 && (
-                <section aria-label="Sources">
-                    <h3 className="mb-2 text-xs font-semibold tracking-wide text-stone-500 uppercase">
-                        Sources
-                    </h3>
-                    <ul className="grid gap-2 md:grid-cols-2">
-                        {response.citations.map((citation) => (
-                            <CitationCard key={citation.chunk_id} citation={citation} />
-                        ))}
-                    </ul>
-                </section>
-            )}
+            {response.citations.length > 0 && <Sources citations={response.citations} />}
             <div className="space-y-3 border-t border-stone-100 pt-3">
                 <FeedbackControl requestId={response.request_id} />
                 <FlagControl requestId={response.request_id} />

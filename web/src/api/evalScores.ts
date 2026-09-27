@@ -1,4 +1,4 @@
-import { isRecord } from "./errors";
+import { isRecord } from "./guards";
 
 export type CategoryScores = {
     n: number;

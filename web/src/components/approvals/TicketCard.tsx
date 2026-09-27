@@ -7,6 +7,31 @@ const STATUS_TONES: Record<Ticket["status"], string> = {
     rejected: "border-stone-300 bg-stone-100 text-stone-700",
 };
 
+type DecisionProps = { busy: boolean; onDecide: (approve: boolean) => void };
+
+function DecisionButtons({ busy, onDecide }: DecisionProps) {
+    return (
+        <div className="flex gap-2">
+            <button
+                type="button"
+                disabled={busy}
+                onClick={() => onDecide(true)}
+                className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:opacity-50"
+            >
+                Approve
+            </button>
+            <button
+                type="button"
+                disabled={busy}
+                onClick={() => onDecide(false)}
+                className="rounded-md border border-stone-300 bg-white px-4 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
+            >
+                Deny
+            </button>
+        </div>
+    );
+}
+
 type Props = {
     ticket: Ticket;
     busy: boolean;
@@ -34,26 +59,7 @@ export function TicketCard({ ticket, busy, error, onDecide }: Props) {
                 <code className="font-mono">{ticket.thread_id.slice(0, 8)}</code>
             </p>
             <p className="text-sm whitespace-pre-wrap text-stone-700">{ticket.draft.body}</p>
-            {ticket.status === "proposed" && (
-                <div className="flex gap-2">
-                    <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => onDecide(true)}
-                        className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-strong disabled:opacity-50"
-                    >
-                        Approve
-                    </button>
-                    <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => onDecide(false)}
-                        className="rounded-md border border-stone-300 bg-white px-4 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50"
-                    >
-                        Deny
-                    </button>
-                </div>
-            )}
+            {ticket.status === "proposed" && <DecisionButtons busy={busy} onDecide={onDecide} />}
             {error && (
                 <p role="alert" className="text-sm text-red-700">
                     {error}

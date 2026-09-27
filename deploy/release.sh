@@ -37,9 +37,10 @@ if [ "$documents" = 0 ]; then
 fi
 
 docker compose up -d --wait caddy </dev/null
-curl -sf "https://$DOMAIN/healthz"
+# The first start obtains the certificate, so the smoke calls retry until TLS is ready.
+curl -sf --retry 20 --retry-delay 3 --retry-all-errors "https://$DOMAIN/healthz"
 echo
-curl -sf "https://$DOMAIN/ask" -H 'Content-Type: application/json' -H 'X-Demo-Role: support' \
+curl -sf --retry 3 --retry-all-errors "https://$DOMAIN/ask" -H 'Content-Type: application/json' -H 'X-Demo-Role: support' \
   -d '{"question":"How many inputs and outputs does the eZNT-T331 network thermostat have?"}' \
   | python3 -c 'import json, sys; r = json.load(sys.stdin); print("smoke /ask:", r["decision"], len(r["citations"]), "citations, cache_hit", r["cache_hit"])'
 echo "release: $SHA is live at https://$DOMAIN"
