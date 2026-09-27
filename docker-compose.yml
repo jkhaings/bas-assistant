@@ -24,7 +24,8 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 30s
+      # Healthy only once the reranker is in memory; a fresh volume downloads it first.
+      start_period: 120s
     restart: unless-stopped
 
   migrate:

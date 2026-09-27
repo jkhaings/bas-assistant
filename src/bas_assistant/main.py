@@ -12,6 +12,7 @@ from bas_assistant.agent.corpus import search_corpus
 from bas_assistant.api import ask, documents
 from bas_assistant.cost import api as cost_api
 from bas_assistant.retrieval.embeddings import OpenAIEmbedder
+from bas_assistant.retrieval.rerank import load_reranker
 from bas_assistant.runtime import open_runtime
 from bas_assistant.settings import Settings
 
@@ -42,6 +43,8 @@ def create_app(lifespan: Lifespan) -> FastAPI:
 @asynccontextmanager
 async def _serve(app: FastAPI) -> AsyncGenerator[None]:
     settings = Settings()
+    # Loaded before the app reports healthy, so no request pays for loading the model.
+    load_reranker(settings.rerank_model)
     retrieve = partial(search_corpus, OpenAIEmbedder(settings), settings)
     with open_runtime(settings, retrieve) as runtime:
         app.state.runtime = runtime

@@ -44,7 +44,16 @@ spec: 3 · ordering: 3 · wiring-power: 3 · protocol: 3 · compatibility: 3 · 
 - `DAC-633PoE-Catalog-Sheet.pdf` and `UNOnext-MODBUS-RTU-Protocol.pdf` are the two documents seeded
   with `acl_groups = ["engineer"]` (see `src/bas_assistant/ingest/sources.py::ENGINEER_ONLY_FILENAMES`).
 
-## How `rerank_threshold` (0.5) was set
+## How `rerank_threshold` was set
+
+**Session D (current, 0.8, `cross-encoder/ms-marco-MiniLM-L-6-v2` over 15 candidates):** measured
+on rows 1–18 as support and rows 19–20 as support and engineer, on the same fused candidates as
+bge. Answerable questions topped out at 0.87–1.00; the must-abstain cases at 0.00 (row 16),
+0.01 (17), 0.72 (18), 0.95 (19 as support) and 0.22 (20 as support). 0.8 sits between 0.72 and
+0.87; row 19 as support is the one left to the answer model's `answerable: false`. Full table
+and latency numbers in `docs/adr/0003-reranker.md`.
+
+**Session A (0.5, `BAAI/bge-reranker-base` over 30 candidates):**
 
 Measured against the live `/ask` endpoint after the real ingest, not guessed:
 

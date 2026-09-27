@@ -43,8 +43,9 @@ class Settings(BaseSettings):
     # Non-secret operational config. URL defaults are the docker compose service names.
     daily_usd_cap: Decimal = Decimal("3")
     user_daily_questions: int = 50
-    # Part of the answer-cache key: bump when the corpus changes so no stale answer survives.
-    corpus_version: str = "1"
+    # Part of the answer-cache key: bump when the corpus or the retrieval over it changes, so
+    # no stale answer survives ("2": the session D reranker).
+    corpus_version: str = "2"
     redis_url: str = "redis://redis:6379/0"
     litellm_base_url: str = "http://litellm:4000"
 
@@ -61,12 +62,14 @@ class Settings(BaseSettings):
     # Used only if the proxy response carries no x-litellm-response-cost header.
     embed_usd_per_mtok: Decimal = Decimal("0.02")
 
-    # Retrieval
-    rerank_model: str = "BAAI/bge-reranker-base"
-    # Tuned in session A against the real corpus (see data/top20_questions.md):
-    # the 15 answerable questions' top score was 0.55-0.99; the out-of-scope
-    # and ACL-blocked-role cases topped out at 0.46. Below this, /ask abstains.
-    rerank_threshold: float = 0.5
+    # Retrieval. MiniLM replaced bge-reranker-base in session D: 13-20 s per question on
+    # the container's CPU against a 3 s budget (docs/adr/0003-reranker.md).
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    # Tuned in session D on the golden set (data/top20_questions.md): with MiniLM the
+    # answerable questions' top score was 0.87-1.00 and the out-of-scope ones 0.00-0.72.
+    # Below this, /ask abstains before any answer call.
+    # TODO(session C): confirm with the golden eval; tuned on 20 rows (docs/adr/0003-reranker.md).
+    rerank_threshold: float = 0.8
 
     @property
     def database_url(self) -> str:

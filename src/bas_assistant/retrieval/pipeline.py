@@ -14,7 +14,7 @@ from bas_assistant.retrieval.fusion import rrf
 from bas_assistant.retrieval.rerank import Reranker
 from bas_assistant.retrieval.store import VectorStore
 
-FUSED_TOP_N = 30
+FUSED_TOP_N = 15
 FINAL_TOP_N = 5
 
 
