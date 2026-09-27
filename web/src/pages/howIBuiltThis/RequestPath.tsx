@@ -1,3 +1,4 @@
+import { Figure } from "../../components/Figure";
 import { Section, Steps } from "./Section";
 
 const REQUEST_STEPS: [string, string][] = [
@@ -28,6 +29,11 @@ export function RequestPath() {
         <Section id="request-path" title="The request path and the four fences">
             <p>What happens between pressing Ask and seeing a cited answer:</p>
             <Steps items={REQUEST_STEPS} />
+            <Figure
+                src="/img/chat-answer.png"
+                alt="A live answer: the node path, the answer, the Red5-PLUS-1180 citation card, feedback buttons and the cost receipt"
+                caption="A live answer, its source, and its receipt: three model calls, $0.00035."
+            />
             <p>
                 The four fences are input, retrieval, output and action:
             </p>

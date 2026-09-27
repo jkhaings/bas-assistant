@@ -338,9 +338,11 @@ Since session C, a LiteLLM key-budget refusal (429, error type `budget_exceeded`
 
 **As built (session C)**: every fence above exists. `docs/security.md` has the table with file
 locations and tests, and the OWASP LLM Top 10 (2025) mapping.
-- The red-team suite (`tests/redteam/`, `make redteam`) runs against the live stack, locally
-  only, because CI makes no LLM calls. Last live run: 6/6 on Sep 27 (`outputs/HANDOFF_C.md`;
-  the latest golden run, 21/22, is in `eval/results/latest.md`). Cases:
+- The red-team suite (`tests/redteam/`, `make redteam`) runs against a running stack, never in
+  CI, because CI makes no LLM calls. Since session E it also runs on the droplet, where the
+  secrets are (README runbook). Last run: 6/6 on the droplet, Sep 27 23:30 UTC
+  (`outputs/HANDOFF_E.md`). The latest golden run, 22/22 against https://bas.jasonkhaings.com, is
+  in `eval/results/latest.md`. Cases:
   - direct injection
   - instructions planted in a document (the case checks that the planted chunk was retrieved)
   - an image-exfiltration request

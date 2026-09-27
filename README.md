@@ -11,6 +11,8 @@ evaluated, and audited.
 Built as a portfolio project. Not affiliated with Delta Controls. All copyrights or whatever rights belong
 to Delta Controls, please don't sue me LOL.
 
+![A live answer: the node path, the answer, its citation card, feedback buttons and the cost receipt](docs/img/live-chat.png)
+
 The web app has a "How I built this" page that walks through the design in plain words. The design
 of record is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -75,15 +77,15 @@ judge = the `fast` alias, gpt-4o-mini). Full table: [eval/results/latest.md](eva
 | | |
 |---|---|
 | Corpus | 112 public documents (70 catalog PDFs, 42 product pages), 1,459 sections, 1,502 chunks |
-| Golden pass rate | LIVE_GOLDEN |
-| RAGAS overall (faithfulness / answer relevancy / context precision / context recall) | LIVE_RAGAS |
-| Weakest category | protocol, faithfulness LIVE_PROTOCOL (see "What it does badly") |
-| Red team | LIVE_REDTEAM |
-| Cost per simple answer (`fast` route) | LIVE_SIMPLE_USD |
-| Cost per complex answer (`strong` route) | LIVE_COMPLEX_USD |
-| Cost of a cache hit | $0 |
-| Cost of a full eval run (answers + RAGAS judge) | LIVE_EVAL_USD |
-| Answer latency, p50 / p95 (2-vCPU droplet, CPU reranker) | LIVE_LATENCY |
+| Golden pass rate | 22/22 (100%): 15 answered with the expected document, 5 abstains, 2 engineer-only answers |
+| RAGAS overall (faithfulness / answer relevancy / context precision / context recall) | 0.734 / 0.903 / 0.825 / 1.000 (n = 17 answered rows) |
+| Weakest category | protocol, faithfulness 0.111 (see "What it does badly") |
+| Red team | 6/6 (injection, planted instructions, image exfiltration, PII, support ticket, off-topic) |
+| Cost per simple answer (`fast` route) | $0.00031 median (16 answers) |
+| Cost per complex answer (`strong` route) | $0.0089 median (3 answers) |
+| Cost of an abstain / a cache hit | about $0.00007 (router and query embedding) / $0 |
+| Cost of a full eval run (answers + RAGAS judge) | $0.053 ($0.022 + $0.031) |
+| Answer latency, p50 / p95 (2-vCPU droplet, CPU reranker) | 6.0 s / 9.5 s (rerank alone 2.9 s / 4.1 s) |
 
 ## How to run locally
 

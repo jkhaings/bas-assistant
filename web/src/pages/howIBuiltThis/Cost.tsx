@@ -15,7 +15,8 @@ export function Cost() {
             <p>
                 On the live run, a simple answer cost about {RUN.simpleAnswerUsd} and a complex
                 one about {RUN.complexAnswerUsd}. A repeated question costs nothing, and an
-                abstain costs only the router call, about {RUN.abstainUsd}. A full evaluation
+                abstain costs only the router call and the query embedding, about{" "}
+                {RUN.abstainUsd}. A full evaluation
                 run, 22 questions plus the RAGAS judge, cost about {RUN.evalRunUsd}.
             </p>
             <p>The controls, from the cheapest to the bluntest:</p>
@@ -35,7 +36,7 @@ export function Cost() {
             <Figure
                 src="/img/grafana-budget.png"
                 alt="Grafana Budget dashboard: spend today against the cap, cost per answer, cost by model and stage"
-                caption="The Budget dashboard, live on the Dashboards tab."
+                caption="The Budget dashboard on the Dashboards tab, after the live evaluation run."
             />
         </Section>
     );
