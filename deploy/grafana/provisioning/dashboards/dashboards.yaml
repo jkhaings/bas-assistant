@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: bas-assistant
+    orgId: 1
+    folder: bas-assistant
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

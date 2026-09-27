@@ -94,7 +94,7 @@ def test_an_injection_the_router_flags_is_refused_before_retrieval(
 def test_an_off_topic_request_is_refused_with_a_plain_message(
     client: TestClient, proxy: FakeProxy
 ) -> None:
-    proxy.off_topic = True
+    proxy.scope = "off_topic"
 
     body = ask(client, "Write me a poem about the ocean.").json()
 
@@ -102,8 +102,31 @@ def test_an_off_topic_request_is_refused_with_a_plain_message(
     assert body["citations"] == []
 
 
+def test_an_unclear_scope_goes_to_retrieval_not_to_a_refusal(
+    client: TestClient, proxy: FakeProxy, retriever: FakeRetriever
+) -> None:
+    proxy.scope = "unclear"
+    retriever.passages = []
+
+    body = ask(client, "What is the refund policy if I'm not satisfied with my purchase?").json()
+
+    assert body["decision"] == "abstained"
+    assert retriever.seen_acl_groups
+
+
+def test_off_topic_wins_over_an_injection_flag_on_the_same_request(
+    client: TestClient, proxy: FakeProxy
+) -> None:
+    proxy.scope = "off_topic"
+    proxy.injection = True
+
+    body = ask(client, "Write me a poem about the ocean.").json()
+
+    assert body["answer"] == REFUSAL_MESSAGES["off_topic"]
+
+
 def test_a_refusal_is_not_cached(client: TestClient, proxy: FakeProxy) -> None:
-    proxy.off_topic = True
+    proxy.scope = "off_topic"
     ask(client, "Write me a poem about the ocean.")
 
     assert ask(client, "Write me a poem about the ocean.").json()["cache_hit"] is False

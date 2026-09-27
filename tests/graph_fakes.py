@@ -83,7 +83,7 @@ class FakeProxy:
     complexity: str = "simple"
     # Set to make the router flag the question, as the real model would for an attack.
     injection: bool = False
-    off_topic: bool = False
+    scope: str = "on_topic"
     # Raw router output to send instead of a well-formed RouteDecision.
     route_reply: str | None = None
     answers: list[str] = field(default_factory=list)
@@ -121,9 +121,9 @@ class FakeProxy:
                     "complexity": self.complexity,
                     "topic": "controller power",
                     "is_injection": self.injection,
-                    "is_off_topic": self.off_topic,
+                    "scope": self.scope,
                     "reason": "flagged by the fake router"
-                    if self.injection or self.off_topic
+                    if self.injection or self.scope == "off_topic"
                     else "",
                 }
             )
@@ -144,9 +144,13 @@ class FakeRetriever:
     passages: list[Passage] = field(default_factory=lambda: list(PASSAGES))
     embed: Usage | None = None
     seen_acl_groups: list[list[str]] = field(default_factory=list)
+    # Raised instead of returning, to stand in for a failure outside the model gateway.
+    crash: Exception | None = None
 
     def __call__(self, _question: str, acl_groups: list[str]) -> Retrieval:
         self.seen_acl_groups.append(acl_groups)
+        if self.crash is not None:
+            raise self.crash
         return Retrieval(passages=self.passages, retrieval_ms=12, rerank_ms=34, embed=self.embed)
 
 

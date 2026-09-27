@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr
     gemini_api_key: SecretStr
     admin_token: SecretStr
-    # Minted by the self-hosted Langfuse instance in session D; optional until then.
+    # Project keys of the self-hosted Langfuse (`make observability-secrets`); without them
+    # tracing is off, as in unit tests and CI.
     langfuse_public_key: SecretStr | None = None
     langfuse_secret_key: SecretStr | None = None
     grafana_admin_password: SecretStr
@@ -46,10 +47,12 @@ class Settings(BaseSettings):
     # Per IP per minute. Every visitor of a role shares its demo user, so this is the
     # per-visitor control on the public link.
     ip_rate_limit: int = 20
-    # Part of the answer-cache key: bump when the corpus changes so no stale answer survives.
-    corpus_version: str = "1"
+    # Part of the answer-cache key: bump when the corpus or the retrieval over it changes, so
+    # no stale answer survives ("2": the session D reranker).
+    corpus_version: str = "2"
     redis_url: str = "redis://redis:6379/0"
     litellm_base_url: str = "http://litellm:4000"
+    langfuse_host: str = "http://langfuse-web:3000"
 
     # Postgres — host/port default to the compose service name and its internal
     # port; integration tests override via env to reach the published host port.
@@ -64,12 +67,15 @@ class Settings(BaseSettings):
     # Used only if the proxy response carries no x-litellm-response-cost header.
     embed_usd_per_mtok: Decimal = Decimal("0.02")
 
-    # Retrieval
-    rerank_model: str = "BAAI/bge-reranker-base"
-    # Re-tuned in session C against the real corpus (data/top20_questions.md), after the
-    # reranker started reading each chunk with its document title: the answerable rows'
-    # top score is 0.93-1.00, the must-abstain rows top out at 0.53. Below this, /ask abstains.
-    rerank_threshold: float = 0.7
+    # Retrieval. MiniLM replaced bge-reranker-base in session D: 13-20 s per question on
+    # the container's CPU against a 3 s budget (docs/adr/0003-reranker.md). It reads each
+    # chunk with its document title (session C).
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    # Set on the golden set with MiniLM and titles (data/top20_questions.md, Sep 27 post-merge):
+    # answerable rows' top score 0.988-1.000, must-abstain rows 0.00-0.944 (row 19 as support).
+    # 0.96 makes every must-abstain row abstain before any answer call; the margins are narrow
+    # (0.016 and 0.028), so re-check it whenever the corpus or the reranker changes.
+    rerank_threshold: float = 0.96
 
     @property
     def database_url(self) -> str:

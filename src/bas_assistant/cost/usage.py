@@ -11,6 +11,7 @@ from sqlalchemy import Engine, insert, select
 from bas_assistant.db.activity import Request
 from bas_assistant.db.activity import Usage as UsageRow
 from bas_assistant.llm.gateway import Usage
+from bas_assistant.observability.metrics import CACHE_HITS, observe_model_call
 
 Stage = Literal["router", "embed", "answer", "judge"]
 
@@ -36,6 +37,7 @@ def record_usage(engine: Engine, request_id: UUID | None, stage: Stage, call: Us
                 created_at=datetime.now(UTC),
             )
         )
+    observe_model_call(stage, call)
 
 
 def record_cache_hit(engine: Engine, request_id: UUID, alias: str) -> None:
@@ -57,6 +59,7 @@ def record_cache_hit(engine: Engine, request_id: UUID, alias: str) -> None:
                 created_at=datetime.now(UTC),
             )
         )
+    CACHE_HITS.inc()
 
 
 class UsageLine(BaseModel):

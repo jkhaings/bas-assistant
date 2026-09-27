@@ -17,7 +17,10 @@ from bas_assistant.agent.graph import CHECKPOINT_SERDE, build_graph
 from bas_assistant.agent.nodes import AgentContext
 from bas_assistant.db.activity import (
     Audit,
+    Budget,
     EvalRun,
+    Feedback,
+    Flag,
     Request,
     RequestChunk,
     Thread,
@@ -36,7 +39,19 @@ def engine() -> Iterator[Engine]:
         "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
     # Only the activity tables the graph writes: the corpus tables use Postgres-only types.
-    tables = [User, Thread, Request, RequestChunk, Usage, Ticket, Audit, EvalRun]
+    tables = [
+        User,
+        Thread,
+        Request,
+        RequestChunk,
+        Usage,
+        Ticket,
+        Audit,
+        EvalRun,
+        Feedback,
+        Flag,
+        Budget,
+    ]
     Base.metadata.create_all(engine, tables=[model.__table__ for model in tables])  # type: ignore[misc]
     with engine.begin() as conn:
         conn.execute(

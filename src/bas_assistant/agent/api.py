@@ -33,6 +33,7 @@ from bas_assistant.api.roles import Role, acl_groups_for_role, demo_role, tools_
 from bas_assistant.audit import write_audit
 from bas_assistant.guardrails.limits import limit_detail, limit_error, per_ip_limit
 from bas_assistant.llm.gateway import GatewayError, KeyBudgetError
+from bas_assistant.observability.tracing import record_event, tag_trace
 from bas_assistant.runtime import AppRuntime, get_runtime
 
 router = APIRouter()
@@ -88,15 +89,18 @@ Started = Annotated[OpenTurn, Depends(start_turn)]
 def ask(turn: Started, runtime: Runtime) -> AskResponse:
     if turn.cached is not None:
         return serve_from_cache(runtime, turn, turn.cached)
-    # TODO(session D): errors other than GatewayError leave the request's decision NULL.
     try:
         invoke_graph(runtime, turn)
     except KeyBudgetError as exc:
-        fail_turn(runtime, turn)
+        fail_turn(runtime, turn, "key budget reached")
         raise limit_error(429, "key_budget_reached", None) from exc
     except GatewayError as exc:
-        fail_turn(runtime, turn)
+        fail_turn(runtime, turn, "model unavailable")
         raise limit_error(503, "model_unavailable", None) from exc
+    except Exception:
+        # Any other error still closes the request as failed, so metrics and dashboards see it.
+        fail_turn(runtime, turn, "server error")
+        raise
     return close_turn(runtime, turn)
 
 
@@ -113,13 +117,16 @@ def ask_stream(turn: Started, runtime: Runtime) -> Iterator[ServerSentEvent]:
         for node in stream_graph(runtime, turn):
             yield ServerSentEvent(event="node", data={"node": node})
     except KeyBudgetError:
-        fail_turn(runtime, turn)
+        fail_turn(runtime, turn, "key budget reached")
         yield ServerSentEvent(event="error", data=limit_detail("key_budget_reached", None))
         return
     except GatewayError:
-        fail_turn(runtime, turn)
+        fail_turn(runtime, turn, "model unavailable")
         yield ServerSentEvent(event="error", data=limit_detail("model_unavailable", None))
         return
+    except Exception:
+        fail_turn(runtime, turn, "server error")
+        raise
     yield ServerSentEvent(event="answer", data=close_turn(runtime, turn))
 
 
@@ -166,6 +173,8 @@ def approve(
         runtime.redis.delete(lock)
     assert state.ticket_id is not None, "a paused thread always has a proposed ticket"
     set_request_decision(runtime.agent.engine, state.request_id, state.decision or "answered")
+    tag_trace(state.request_id, body.thread_id, "admin")
+    record_event("gate resumed", {"ticket_id": str(state.ticket_id), "approve": body.approve})
     return ApproveResponse(
         thread_id=body.thread_id,
         ticket_id=state.ticket_id,

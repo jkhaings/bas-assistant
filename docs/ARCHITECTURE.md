@@ -1,6 +1,6 @@
 # bas-assistant: design document
 
-Stack locked (Sep 26, final weekend scope): FastAPI + Pydantic v2 · Postgres 16 + pgvector + tsvector · Redis · Docling (pypdfium2 fallback — already a Docling dependency, avoids adding AGPL PyMuPDF) · LlamaIndex (ingestion) · OpenAI text-embedding-3-small · local bge-reranker · LiteLLM gateway · GPT-4o-mini → Gemini Flash (fast tier), Claude Sonnet → GPT-4o (strong tier) · LangGraph + Postgres checkpointer + `interrupt` human gate (internal ticket table, no Jira) · guardrails as code: Presidio in/out, injection rail, output validator · "View as" role switcher (no login), admin token for /approve · Langfuse (OTel) · RAGAS + pytest golden set + red-team pytest · Prometheus + Grafana (Budget; Quality & adoption; embedded in the app) · React + TypeScript (Vite) · Docker Compose on the DigitalOcean droplet, Caddy, Cloudflare DNS at bas.jasonkhaings.com · GitHub Actions (one job, PR only, no LLM calls).
+Stack locked (Sep 26, final weekend scope): FastAPI + Pydantic v2 · Postgres 16 + pgvector + tsvector · Redis · Docling (pypdfium2 fallback — already a Docling dependency, avoids adding AGPL PyMuPDF) · LlamaIndex (ingestion) · OpenAI text-embedding-3-small · local MiniLM cross-encoder reranker (bge-reranker-base until session D, ADR 0003) · LiteLLM gateway · GPT-4o-mini → Gemini Flash (fast tier), Claude Sonnet → GPT-4o (strong tier) · LangGraph + Postgres checkpointer + `interrupt` human gate (internal ticket table, no Jira) · guardrails as code: Presidio in/out, injection rail, output validator · "View as" role switcher (no login), admin token for /approve · Langfuse (OTel) · RAGAS + pytest golden set + red-team pytest · Prometheus + Grafana (Budget; Quality & adoption; embedded in the app) · React + TypeScript (Vite) · Docker Compose on the DigitalOcean droplet, Caddy, Cloudflare DNS at bas.jasonkhaings.com · GitHub Actions (one job, PR only, no LLM calls).
 
 Deferred until after the technical round: Slack, n8n, MCP server, Jira, Prefect (ingest is `make ingest`), Cohere, Ollama, promptfoo, LangSmith, k6, MkDocs, Azure/Terraform, Entra ID, Chroma, Guardrails AI library. Sections below that mention these describe the production path, not this weekend's build.
 
@@ -19,9 +19,9 @@ This file becomes `docs/ARCHITECTURE.md` in the repo. Keep it current-state trut
 |---|---|---|
 | 0 — scaffold | `main` | Shipped: `/healthz`, settings, logging, CI |
 | A — retrieval | `a-retrieval` | Shipped: ingest (crawl/parse/chunk/embed), hybrid retrieval, `GET /documents`; its retrieval-only `/ask` is now `POST /search` |
-| B — graph | `b-graph` | Built on branch with main (A) merged in, not merged to main: LiteLLM proxy (fast / strong / embed, embeddings included), router, Redis cache, `usage` + receipt, daily cap + allowance, LangGraph with human gate on a Postgres checkpointer, retrieve node on A's hybrid search, `/ask`, `/ask/stream`, `/approve`, `/threads/{id}/history`, `/tickets`, `/requests/{id}/receipt` |
-| C — guardrails | `c-guardrails` | Built on branch, not merged to main: Presidio input redaction before storage and models, injection/off-topic rail (patterns + router flags → `refuse`), output PII check, per-IP limiter, one limit error shape, audit row on every decision, `/approve` tool allowlist, key-budget 429, prompt versioning, golden set (`make eval`) + RAGAS + `eval_runs` + `GET /evals/latest`, red team (`make redteam`), `docs/security.md`. Also retrieval (document title in lexical rank and rerank, threshold 0.7) and crawler retries |
-| D — observability | `d-observability` | Not started |
+| B — graph | `b-graph` | Merged to main: LiteLLM proxy (fast / strong / embed, embeddings included), router, Redis cache, `usage` + receipt, daily cap + allowance, LangGraph with human gate on a Postgres checkpointer, retrieve node on A's hybrid search, `/ask`, `/ask/stream`, `/approve`, `/threads/{id}/history`, `/tickets`, `/requests/{id}/receipt` |
+| C — guardrails | `c-guardrails` | Merged to main: Presidio input redaction before storage and models, injection/off-topic rail (patterns + router flags → `refuse`), output PII check, per-IP limiter, one limit error shape, audit row on every decision, `/approve` tool allowlist, key-budget 429, prompt versioning, golden set (`make eval`) + RAGAS + `eval_runs` + `GET /evals/latest`, red team (`make redteam`), `docs/security.md`. Also retrieval (document title in lexical rank and rerank, threshold 0.7) and crawler retries |
+| D — observability | `d-observability` | Built on branch, not merged: reranker loaded at startup, 20 candidates, MiniLM cross-encoder (ADR 0003); OpenTelemetry traces to self-hosted Langfuse; Prometheus `/metrics`; Grafana Budget and Quality & adoption dashboards on `dash_*` views with alert rules; `POST /requests/{id}/feedback` and `/flag`; JSON logs with request_id and trace_id |
 | E — ship | `e-ship` | Not started |
 
 
@@ -75,6 +75,13 @@ Cost rolls up from `usage`; adoption from `requests` and `feedback`; quality fro
 - New `audit` actions: `input_redacted`, `input_refused`, `decision`, `rate_limited`,
   `daily_cap_reached`, `allowance_used`, `approve_refused`.
 
+**Session D additions (migration `0005`, after C's `0004`)**:
+- Fifteen `dash_*` views behind every Postgres panel in Grafana. `dash_questions` is closed `/ask` turns only: `/search` diagnostics have no route and are left out. It is the building block for the others and holds request, thread and user ids, so it is the one view Grafana cannot read.
+- A `grafana_reader` role that may select the fourteen panel views and nothing else, with a connection limit of 5 and a 5 s `statement_timeout`. `TEMP` is revoked from `PUBLIC` on the database, so no role can fill the disk with temp tables. The role is created NOLOGIN; `make grafana-db-user` sets its password from `GRAFANA_DB_PASSWORD`.
+- `budgets` rows: global/monthly $5 (the app's LiteLLM virtual-key budget) and global/daily, which the app rewrites from `DAILY_USD_CAP` at every start (`cost/budget.sync_daily_cap`). The cap is still enforced from the setting; the row lets the dashboard show the cap that is actually enforced.
+- `dash_eval_latest` reads `eval_runs.scores->'overall'` when it is an object, else the top-level numeric keys: the contract for session C's RAGAS rows.
+- `feedback` and `flags` are written by the endpoints in §10.
+
 ---
 
 ## 3. Ingestion pipeline (`make ingest`, manual — Prefect is the deferred production path)
@@ -109,21 +116,29 @@ Web (curl, for now)
       │
       ▼
  retrieve(): embed the question → pgvector top-20 ∪ tsvector top-20 (both acl_groups &&-filtered)
-             → reciprocal rank fusion → top-30 → local cross-encoder rerank
+             → reciprocal rank fusion → top-20 → local cross-encoder rerank
              → group by parent, best child per parent → top-5
              → best score < rerank_threshold ? abstain : citations
       │
       ▼
  Persist: one `threads` row (one per request — session B adds multi-turn reuse),
           one `requests` row (decision = retrieved|abstained), `request_chunks` for
-          the top-30 reranked, one `usage` row for the query embed call
+          the top-20 reranked, one `usage` row for the query embed call
       │
       ▼
  Response: {request_id, answer: null, citations[], retrieved[], abstained, timings}
 ```
 
-Retrieval-only p95 is well under a second locally (the reranker is the only non-trivial cost,
-and it runs on CPU).
+The reranker is the only non-trivial cost in retrieval, and it runs on CPU. Measured in session D
+(ADR 0003):
+- bge-reranker-base over 30 candidates took 13–20 s per question in the container.
+- Since session D, `cross-encoder/ms-marco-MiniLM-L-6-v2`, loaded at app startup
+  (`retrieval.rerank.load_reranker` in the lifespan), with `CORPUS_VERSION` "2" so no answer cached under the old
+  reranker is served.
+- After the C merge it reads each chunk with its document title, over 20 fused candidates (15 cut golden row 13's
+  answer at fused rank 18). Rerank p50 2.0 s and p95 3.4 s over the golden checks on this machine, about 0.4 s over
+  the 3 s rerank budget, a trade Jason chose for 22/22 golden. `rerank_threshold` is 0.96, set from the golden set
+  so every must-abstain check abstains at retrieval (ADR 0003, post-merge sections).
 
 **Retrieval as of session C**:
 - The lexical candidates match and rank on `setweight(to_tsvector(documents.title), 'A') ||
@@ -131,8 +146,8 @@ and it runs on CPU).
 - The cross-encoder scores `"{document title}\n{chunk text}"`. A short spec section
   ("## Power / 24 VDC (20 W max)") rarely names its product, and sibling catalog sheets repeat
   sections word for word, so without the title the reranker cannot tell them apart.
-- `rerank_threshold` is re-tuned from 0.5 to 0.7. Every answerable golden row now tops out at 0.93
-  or above, and every must-abstain row at 0.53 or below (`data/top20_questions.md`).
+- C re-tuned `rerank_threshold` from 0.5 to 0.7 for bge-reranker-base (answerable rows 0.93 and above, must-abstain
+  rows 0.53 and below). After the merge with D's MiniLM it is 0.96 (above).
 - `/search` also passes the per-IP limiter. It redacts the question before the query embedding
   and stores only the redacted text.
 
@@ -166,7 +181,9 @@ and it runs on CPU).
 - Every closed request writes an audit `decision` row with decision, route and prompt_version,
   cache hits included.
 
-**Deferred**: tracing (D); API keys for Slack / n8n / MCP (post-weekend).
+Since session D, any error in `/ask` or `/ask/stream` closes the request as `failed` (and refunds the allowance) before the error propagates, so crashes show up in metrics and on the dashboards. Before, only gateway failures did.
+
+**Deferred**: API keys for Slack / n8n / MCP (post-weekend).
 
 ---
 
@@ -183,7 +200,7 @@ decision, errors[], usage_so_far
 **Nodes and edges**:
 
 1. `route` — fast model, structured output `{complexity: simple|complex, topic}`. Edge: always → `retrieve`. Logged to `usage` stage `router`.
-2. `retrieve` — hybrid search in one SQL: vector top-20 ∪ tsvector top-20 → reciprocal rank fusion → rerank top-30 locally → top-5 parents, filtered by `acl_groups && user.acl_groups`. Edge: best score < threshold → `abstain`; else → `answer`.
+2. `retrieve` — hybrid search in one SQL: vector top-20 ∪ tsvector top-20 → reciprocal rank fusion → rerank top-20 locally (top-30 until session D) → top-5 parents, filtered by `acl_groups && user.acl_groups`. Edge: best score < threshold → `abstain`; else → `answer`.
 3. `abstain` — deterministic, no model call. "I couldn't find this in the documentation. I searched: … Try: …" Decision = abstained. → `finish`.
 4. `answer` — model per `route`, system prompt with invariants only, passages wrapped as data. Structured output: `{answer, citations: [chunk_id], confidence, needs_ticket, ticket_draft?}`. Prompt caching on the system prompt. → `validate`.
 5. `validate` — code, no model. Citations must be a subset of retrieved ids; no URLs outside `documents.source_url`; no images; schema valid. Fail → one retry of `answer` with the mismatch list appended; second fail → decision = failed, safe message. Pass → `needs_ticket` ? `propose_ticket` : `finish`.
@@ -216,9 +233,13 @@ decision, errors[], usage_so_far
   nodes; the model still makes two decisions.
 - **screen**: code only, $0. A narrow regex list of instruction-override phrasings
   (`guardrails/input.injection_pattern`). "ignore the wiring instructions" is not one of them.
-- **route**: the router call also returns `is_injection`, `is_off_topic` and `reason`, with
-  `max_tokens` 120. Off-topic means nothing to do with building automation or the company;
-  refund, policy and support questions are on topic, and abstain when the docs do not cover them.
+- **route**: the router call also returns `is_injection`, `scope` (`on_topic | unclear | off_topic`) and `reason`, with
+  `max_tokens` 120. Only `off_topic` refuses: nothing to do with building automation or the company. `unclear` is a
+  question the company could be asked that the documents may not cover (a refund, an account, a policy); it goes to
+  `retrieve` and abstains there. Since the post-merge D session: a yes/no `is_off_topic` refused the golden refund
+  question in 3 of 10 live runs, `unclear` made it 0 of 10. An `off_topic` scope also wins over an `is_injection`
+  flag on the same request, because the model ticks both for a plain "write me a poem"; real override phrasings are
+  caught by `screen` first.
 - **refuse**: decision `refused` with a fixed plain message per kind, and an `input_refused`
   audit row (rail `pattern|model`, kind, reason). The model's reason is never shown, and a
   refusal is not cached. State gains `refusal`, `refusal_rail` and `refusal_reason`.
@@ -236,7 +257,9 @@ decision, errors[], usage_so_far
   (admin only); otherwise 403 and an `approve_refused` audit row. The approver id is that role's
   demo user.
 
-**Deferred**: metrics in `finish` (D); Jira in `act` (post-weekend); the MCP server.
+Since session D the six work nodes run inside a trace span each (`graph.traced`), and request metrics are counted where the API closes the request row (`records.close_request`), not in `finish`, because cache hits never enter the graph (§8).
+
+**Deferred**: Jira in `act` (post-weekend); the MCP server.
 
 ---
 
@@ -274,7 +297,9 @@ Since the session B merge this holds for embeddings too: session A's `EmbeddingP
 
 Since session C, a LiteLLM key-budget refusal (429, error type `budget_exceeded`, checked live with a `max_budget: 0` key) raises `KeyBudgetError` and returns 429 `key_budget_reached`. The allowance is refunded. RAGAS judge calls are written as `usage` rows with stage `judge` and no request id, so the daily cap counts them.
 
-**Deferred**: team attribution (`users.team` exists; nothing groups by it yet); Grafana panels and alerts (D); `docs/cost-model.md` (E); the `budgets` table.
+**Reporting as built (session D)**: the Budget dashboard (§11) reads `usage`, `requests` and `budgets` through the `dash_*` views: spend today against the enforced cap, month-to-date against the $5 key budget with a linear month-end projection, cost per answer, cost by model and stage, cost per user and team, cache hit rate, and USD per hour by model from Prometheus. Alerts fire at 50, 80 and 100% of the daily cap.
+
+**Deferred**: `docs/cost-model.md` (E); per-request ($0.10) and hourly-spike cost alerts; per-team budgets (the Budget dashboard groups by `users.team`, but every demo user is team `default`).
 
 ---
 
@@ -309,10 +334,37 @@ locations and tests, and the OWASP LLM Top 10 (2025) mapping.
 
 ## 8. Observability
 
-- **Traces**: LangSmith (`LANGSMITH_TRACING=true`, zero code) and Langfuse (OpenTelemetry exporter) receive every graph run: node timings, retrieved chunks, model calls with tokens and cost, validation outcomes, gate events.
+- **Traces**: Langfuse (OpenTelemetry exporter) receives every graph run: node timings, retrieval, model calls with tokens and cost, validation outcomes, gate events. (LangSmith was dropped from scope on Sep 26.)
 - **Metrics** (Prometheus, scraped from `/metrics`): requests by decision, latency histogram by route and stage, tokens and USD by model and stage, cache hits, abstains, refusals, validation retries and failures, tool calls by outcome, active threads.
 - **Grafana dashboard**: p50/p95 latency, cost per answer, abstain rate, refusal rate, validation failure rate, tool success, requests per user, error rate. Alerts: error rate > 5%, p95 > 8s, budget thresholds, validation failure rate > 2%.
 - **Logs**: structured JSON with request_id; no PII, no raw questions (the redacted form only).
+
+**As built (session D)**, `src/bas_assistant/observability/`, `deploy/{prometheus,grafana,langfuse}/`:
+- **Traces**: OpenTelemetry, exported over OTLP/HTTP to a self-hosted Langfuse v4 (`deploy/langfuse/compose.yml`: web on 127.0.0.1:3001, worker, ClickHouse, MinIO, and its own Postgres and Redis). LangSmith is not used. `FastAPIInstrumentor` makes one root span per API request (`/healthz` and `/metrics` excluded). Inside it:
+  - `node <name>` spans for route, retrieve, answer, validate, propose_ticket and act. Each records what the node decided (route, decision, attempts, violation and passage counts, retrieval/rerank ms), never text. `human_gate` is not wrapped, because `interrupt()` raises to pause.
+  - A generation span per model call (`llm fast|strong|embed`), with model, tokens and USD from the proxy's headers.
+  - `retrieval.search` and `retrieval.rerank` spans.
+  - `gate paused` / `gate resumed` events.
+  - The trace carries `langfuse.session.id` = thread id (so a thread's `/ask` and `/approve` group together), user = role, and metadata request_id, decision, route and cache_hit.
+  - Its input is the redacted question, the same string as `requests.question_redacted`; its output is the validated answer. Prompts, passages and the raw question are never attached, and a unit test checks that no span attribute holds the raw question.
+  - Without `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` nothing is exported (unit tests, CI).
+- **Metrics** (`GET /metrics`, scraped by Prometheus every 15 s):
+  - `bas_requests_total{decision,route}` and `bas_request_latency_seconds{route}`, counted where every request closes (`agent/records.close_request`); abstains and refusals are decisions.
+  - `bas_stage_latency_seconds{stage}` for retrieval, rerank, router, embed and answer.
+  - `bas_tokens_total{model,stage,kind}` and `bas_usd_total{model,stage}` (from `record_usage`).
+  - `bas_cache_hits_total`, `bas_validation_retries_total`, `bas_validation_failures_total`, `bas_tickets_total{status}`, `bas_feedback_total{value}`, `bas_flags_total`.
+  - `bas_active_threads`, the turns running right now; the metric is named "active threads" in the plan.
+  - `bas_http_requests_total{method,route,status}` by route template (the error-rate source; probes and scrapes are not counted).
+  - Labels never carry ids or users. Per-user numbers come from Postgres.
+- **Grafana** 13.2 at `/grafana` (127.0.0.1:3000):
+  - Anonymous Viewer, embedding allowed, sub-path serving, Explore off, admin password from env.
+  - Data sources: Prometheus, and Postgres as `grafana_reader`, a role that can select only the panel views from migration 0005. Anonymous viewers can send any SQL through a data source, so the role is the boundary: no readable view exposes a question, answer, flag reason, email or id. The role has 5 connections, Grafana at most 4, and a 5 s statement timeout.
+  - Grafana's container reads only `~/.bas-assistant-grafana.env` (its admin and reader passwords), never the vendor keys, because it is the one publicly reachable service.
+  - Two provisioned, read-only dashboards: **Budget** (`bas-budget`) and **Quality & adoption** (`bas-quality`, including hourly p50/p95 `rerank_ms`); panels in §11.
+  - Five alert rules: API 5xx share above 5%, p95 answer latency above 8 s, and daily spend at 50, 80 and 100% of the cap. The error-rate rule also counts the daily-cap 503, so a tripped cap fires it alongside the 100% rule. `bas_requests_total` counts a request when it first closes, so a gated request stays `paused` there; `/approve` updates only the row, which the Postgres panels read.
+- **Logs**: every JSON line carries the OTel `trace_id` when a span is active, and request logs carry `request_id`, so a log line leads to its trace. No question text is logged.
+
+**Deferred**: an alert contact point (alerts show in Grafana's alerting page only); Langfuse on the droplet (drop order #2, decided in session E); the tool-call metric (the only tool is the ticket, counted by `bas_tickets_total`); the validation-failure-rate alert (the failures counter and panel exist). Session E's Caddy must not route `/metrics` or Langfuse publicly without auth.
 
 ---
 
@@ -364,6 +416,15 @@ locations and tests, and the OWASP LLM Top 10 (2025) mapping.
 - **Sounded right but wasn't**: any user can flag an answer with a reason; stored in `flags`. Automatic proxy: RAGAS faithfulness below threshold on sampled production answers. Reported as % of answered requests, weekly, with the reasons listed.
 - **Shadow mode**: four weeks where the team works as normal and the assistant answers beside them. Decision rule written down in advance: expand to the next team if flagged rate stays under 2% and used-as-is is above 60%.
 
+**As built (session D)**, `src/bas_assistant/feedback/api.py`:
+- `POST /requests/{id}/feedback {value: used_as_is|used_with_edits|not_used}` and `POST /requests/{id}/flag {reason}` both return 204.
+- The caller is the `X-Demo-Role` user. A request that belongs to another role is 404, the same rule as thread history.
+- One vote per person per answer; a new vote replaces the old.
+- The flag reason is redacted before it is stored (regex today; Presidio from C).
+- The Quality dashboard shows used-as-is and flagged as % of answered questions per week, never the reasons, because the dashboard is public.
+
+The RAGAS-faithfulness proxy on sampled production answers is not built.
+
 ---
 
 ## 11. Interfaces and channels
@@ -374,6 +435,22 @@ Two interfaces people look at:
 2. **The dashboard (Grafana)**: two dashboards, one Grafana, embedded in the app's Dashboards tab and also reachable at /grafana. Data sources: Prometheus (live ops) and Postgres directly (business numbers).
    - **Budget**: spend today, month-to-date vs budget, cost per answer, cost by model and by stage (router / embed / answer), cost per user and per team, cache hit rate, projected month-end, budget thresholds drawn on the panels.
    - **Quality and adoption**: weekly active users, questions per user, abstain rate, refusal rate, validation failures, p95 latency, ticket escalation rate, and the two letter numbers: used-without-edits % and flagged-wrong %.
+
+   - **As built (session D)**: `deploy/grafana/dashboards/{budget,quality}.json`, provisioned read-only.
+     - Budget:
+       - Spend today, and as % of the daily cap (50/80/100 thresholds).
+       - Month to date: USD, % of budget, and projected month-end.
+       - Spend per day against dashed cap lines.
+       - USD per hour by model (Prometheus); cost per answer; cost by model and stage.
+       - Cost per user and team; cache hit rate.
+     - Quality & adoption:
+       - Adoption: active users and questions per user this week; questions and active users by week.
+       - The two letter numbers: used-without-edits % and flagged %.
+       - Tickets: escalation rate and tickets by status.
+       - Latency: hourly p50/p95 rerank time against a 3 s line, and hourly p50/p95 answer latency against the 8 s line.
+       - Abstain, refusal and failure rates; p95 by stage (Prometheus); validation retries and failures.
+       - Latest evaluation scores from `eval_runs`.
+     - `deploy/grafana/iframe-test.html` embeds both in plain iframes.
 
 Channels into the same API (not screens):
 - **Slack**: `/ask-docs question` via Slack Bolt, service-account API key, signing-secret verification, answer with citation links, feedback buttons, "propose ticket" for engineer/admin.
@@ -387,7 +464,18 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
 ## 12. Deployment
 
 - **Local**: `docker compose up` brings app, Postgres+pgvector, Redis, LiteLLM, Ollama, Langfuse, Prometheus, Grafana, n8n.
-  As built (sessions A+B): `make up` starts `migrate` (one-shot `alembic upgrade head`), app, Postgres + pgvector (127.0.0.1:5433, password from the env file), Redis (127.0.0.1:6379, for host-side tests) and the LiteLLM proxy (127.0.0.1:4000, image pinned by digest, its `DATABASE_URL` assembled in the container from `POSTGRES_PASSWORD`), then registers the virtual keys. Ollama, Langfuse, Prometheus, Grafana and n8n are not in compose yet.
+  As built (sessions A+B): `make up` starts `migrate` (one-shot `alembic upgrade head`), app, Postgres + pgvector (127.0.0.1:5433, password from the env file), Redis (127.0.0.1:6379, for host-side tests) and the LiteLLM proxy (127.0.0.1:4000, image pinned by digest, its `DATABASE_URL` assembled in the container from `POSTGRES_PASSWORD`), then registers the virtual keys.
+  Session D adds:
+  - Prometheus (127.0.0.1:9090) and Grafana (127.0.0.1:3000, served at `/grafana`).
+  - Langfuse through `include: deploy/langfuse/compose.yml` (web on 127.0.0.1:3001, plus worker, ClickHouse, MinIO, Postgres 17 and Redis of its own, none published). Its containers read only `~/.bas-assistant-langfuse.env`, because its variable names collide with ours and it has no use for the vendor keys.
+  - `make observability-secrets` writes that file once, and appends `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `GRAFANA_DB_PASSWORD` to the main env file.
+  - `make up` ends with `make grafana-db-user`.
+
+  Every service's Docker log is capped (`json-file`, 2 x 50 MB), and ClickHouse logs warnings only, into 2 x 50 MB
+  files, without its telemetry tables (`deploy/langfuse/clickhouse.xml`). On Sep 27 its default trace-level console
+  log reached 33 GB and filled the 58 GB Docker disk.
+
+  Ollama and n8n are not in compose.
 - **Public demo**: the same Compose file (production profile: no Ollama if the droplet is small, Langfuse optional) on a DigitalOcean droplet. Caddy reverse proxy with auto-TLS: `/` → web app + API, `/grafana` → Grafana with anonymous Viewer access limited to the two dashboards. Cloudflare DNS A record on the jasonkhaings.com subdomain. Secrets in the droplet's env file only. `deploy/deploy.sh` pulls the tagged image and restarts.
 - **CI**: one GitHub Actions workflow, one job (pull_request only, concurrency cancel-in-progress): gitleaks, ruff, mypy, `pytest -m unit`. uv cache on. No LLM calls, no image push, no `secrets.` refs.
 - **Abuse controls (public link)**: per-IP sliding-window rate limit, global daily USD cap (demo pauses with a message and a reset time), vendor-side hard spend limits on every key, exact-match cache, `max_tokens` caps. Admin token required for /approve.

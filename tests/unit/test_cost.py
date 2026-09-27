@@ -7,7 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 
-from bas_assistant.db.activity import RequestChunk
+from bas_assistant.cost.budget import sync_daily_cap
+from bas_assistant.db.activity import Budget, RequestChunk
 from bas_assistant.llm.gateway import Usage
 from tests.graph_fakes import (
     CHUNK_1,
@@ -133,3 +134,14 @@ def test_retrieved_passages_are_recorded_with_the_cited_one_marked(
         (CHUNK_1, 1, True),
         (CHUNK_2, 2, False),
     ]
+
+
+def test_daily_cap_row_mirrors_the_enforced_cap(engine: Engine) -> None:
+    sync_daily_cap(engine, Decimal(3))
+    sync_daily_cap(engine, Decimal("0.01"))
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(Budget.usd_limit).where(Budget.scope == "global", Budget.period == "daily")
+        ).all()
+    assert [row.usd_limit for row in rows] == [Decimal("0.01")]

@@ -46,6 +46,34 @@ spec: 3 · ordering: 3 · wiring-power: 3 · protocol: 3 · compatibility: 3 · 
 
 ## How `rerank_threshold` was set
 
+**Current (0.96, `cross-encoder/ms-marco-MiniLM-L-6-v2` over 20 candidates, each chunk read with
+its document title):** measured after C and D merged, through the app's own `retrieve()` in the
+container with the threshold at 0, for every golden check (rows 1–18 as support, 19–20 as support
+and engineer):
+
+| Check | Top score | Expected document in top 5 |
+|---|---|---|
+| Rows 1–15 (support), 19 and 20 (engineer): 17 answerable | 0.988–1.000 | 17 / 17 |
+| Row 16 (support) | 0.000 | — |
+| Row 17 (support) | 0.138 | — |
+| Row 20 (support, ACL-blocked) | 0.168 | — |
+| Row 18 (support) | 0.505 | — |
+| Row 19 (support, ACL-blocked) | 0.944 | — |
+
+Any value between 0.944 and 0.988 sends every must-abstain check to abstain at retrieval; 0.96
+sits near the middle. The scan was repeated at 20 candidates, after row 13 showed 15 cut its answer: the same
+split (answerable 0.988–1.000, must-abstain 0.000–0.944), and `make eval` then passed 22 / 22. The margins are narrow, so re-check it whenever the corpus, the reranker
+or the reranker's input changes. The two tables below are the earlier settings.
+
+**Session D, before the C merge (0.8, `cross-encoder/ms-marco-MiniLM-L-6-v2` over 15 candidates):** measured
+on rows 1–18 as support and rows 19–20 as support and engineer, on the same fused candidates as
+bge. Answerable questions topped out at 0.87–1.00; the must-abstain cases at 0.00 (row 16),
+0.01 (17), 0.72 (18), 0.95 (19 as support) and 0.22 (20 as support). 0.8 sits between 0.72 and
+0.87; row 19 as support is the one left to the answer model's `answerable: false`. Full table
+and latency numbers in `docs/adr/0003-reranker.md`.
+
+**Session A (0.5, `BAAI/bge-reranker-base` over 30 candidates):**
+
 Session A set 0.5 from the top rerank scores of the live `/search` endpoint. Session C changed what
 the reranker reads: each chunk is now scored with its document's title in front of it, and the
 lexical search matches the title too (weighted above the chunk's own words). Golden rows 8 and 10

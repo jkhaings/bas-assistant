@@ -19,7 +19,7 @@ Running log — add a line whenever a new dependency is added to pyproject.toml.
 | docling | ≥2.15 | — | PDF parsing that preserves table structure as markdown |
 | pypdfium2 | ≥4.30 | — | Already a Docling dependency (Apache-2.0); reused directly as the PDF-parse fallback instead of adding PyMuPDF (AGPL) |
 | llama-index-core | ≥0.12 | — | `MarkdownNodeParser` + `SentenceSplitter` for parent-child chunking |
-| sentence-transformers | ≥3.3 | — | Local `CrossEncoder` reranker (`bge-reranker-base`), no network call at query time |
+| sentence-transformers | ≥3.3 | — | Local `CrossEncoder` reranker (`ms-marco-MiniLM-L-6-v2` since session D, ADR 0003), no network call at query time |
 | torch | ≥2.0 | — | Made a direct dependency (not left implicit via sentence-transformers): uv's `[tool.uv.sources]` platform-conditional index override only takes effect for packages also listed in `[project.dependencies]`, not purely-transitive ones — confirmed by reproduction, not documented. Without this, torch pulled the CUDA-toolkit meta-dependencies (~3 GB of nvidia-* wheels) even under the CPU-only index override. |
 | langgraph | ≥1.2 | a hand-written loop | Typed state graph, `interrupt` for the human gate, checkpoint/resume (session B) |
 | langgraph-checkpoint-postgres | ≥3.1 | pickle to a table | Postgres checkpointer so a paused thread survives restarts; uses the same psycopg driver (session B) |
@@ -30,6 +30,10 @@ Running log — add a line whenever a new dependency is added to pyproject.toml.
 | presidio-anonymizer | ≥2.2.364 | string slicing | Replaces detected spans with `<ENTITY_TYPE>` and resolves overlaps (session C) |
 | en-core-web-sm | 3.8.0 (wheel URL) | — | The spaCy model Presidio's name and place recognizer needs. `sm` is 12 MB against `lg`'s ~560 MB, so CI and the image stay small. It never tags street lines, so a Presidio `PatternRecognizer` covers those. Not on PyPI, so pinned by release URL (session C) |
 | tenacity | ≥9.1 | a hand-written sleep loop | Already in the lockfile (langchain-core). Retry with exponential backoff on the crawler's transient network and 5xx errors (session C) |
+| prometheus-client | ≥0.26 | a hand-written text exposition | Counters, histograms and the `/metrics` text format Prometheus scrapes (session D) |
+| opentelemetry-sdk | ≥1.45 | — | Spans with a batch processor; the vendor-neutral way into Langfuse, which ingests OTLP (session D) |
+| opentelemetry-exporter-otlp-proto-http | ≥1.45 | urllib + hand-built protobuf | OTLP over HTTP to Langfuse (it does not accept gRPC) (session D) |
+| opentelemetry-instrumentation-fastapi | ≥0.66b0 | a hand-written ASGI middleware | One root span per request with HTTP semantics, context carried into sync handlers (session D) |
 
 ## Dev / CI
 

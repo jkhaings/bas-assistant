@@ -1,0 +1,10 @@
+# Scrapes the app's /metrics (src/bas_assistant/observability/metrics.py).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: bas-assistant
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8000"]

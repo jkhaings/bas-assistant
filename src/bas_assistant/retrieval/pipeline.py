@@ -9,12 +9,16 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from bas_assistant.db.corpus import Chunk, Parent
+from bas_assistant.observability.metrics import observe_retrieval
+from bas_assistant.observability.tracing import tracer
 from bas_assistant.retrieval.embeddings import EmbedBatch, EmbeddingProvider
 from bas_assistant.retrieval.fusion import rrf
 from bas_assistant.retrieval.rerank import Reranker
 from bas_assistant.retrieval.store import VectorStore
 
-FUSED_TOP_N = 30
+# 20, not 15: golden row 13's answer (enteliWEB's browser list) fuses at rank 18; the reranker
+# scores it best of all. MiniLM keeps 20 pairs under the 3 s budget (docs/adr/0003-reranker.md).
+FUSED_TOP_N = 20
 FINAL_TOP_N = 5
 
 
@@ -153,16 +157,22 @@ def retrieve(query: str, acl_groups: list[str], deps: RetrievalDeps) -> Retrieva
     embed_ms = int((time.monotonic() - start) * 1000)
 
     retrieval_start = time.monotonic()
-    candidates = _fused_candidates(query, embed_batch.vectors[0], acl_groups, deps.store)
+    with tracer.start_as_current_span("retrieval.search") as span:
+        candidates = _fused_candidates(query, embed_batch.vectors[0], acl_groups, deps.store)
+        span.set_attribute("retrieval.candidates", len(candidates))
     retrieval_ms = int((time.monotonic() - retrieval_start) * 1000)
 
     rerank_start = time.monotonic()
-    # Skip the model call entirely on an empty pool — no ACL-visible chunk
-    # matched at all — rather than trust the reranker to handle a 0-length batch.
-    scores = (
-        deps.reranker(query, [_rerank_text(chunk) for chunk in candidates]) if candidates else []
-    )
+    with tracer.start_as_current_span("retrieval.rerank") as span:
+        # Skip the model call entirely on an empty pool — no ACL-visible chunk
+        # matched at all — rather than trust the reranker to handle a 0-length batch.
+        texts = [_rerank_text(chunk) for chunk in candidates]
+        scores = deps.reranker(query, texts) if candidates else []
+        span.set_attributes(
+            {"rerank.pairs": len(scores), "rerank.top_score": max(scores, default=0)}
+        )
     rerank_ms = int((time.monotonic() - rerank_start) * 1000)
+    observe_retrieval(retrieval_ms, rerank_ms)
 
     citations, abstained = _select_citations(
         candidates, scores, deps.store, deps.rerank_threshold, acl_groups

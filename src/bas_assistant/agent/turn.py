@@ -28,6 +28,13 @@ from bas_assistant.cost.usage import record_cache_hit
 from bas_assistant.guardrails.input import redact
 from bas_assistant.guardrails.limits import limit_error
 from bas_assistant.llm.router import Route
+from bas_assistant.observability.metrics import ACTIVE_THREADS, observe_validation
+from bas_assistant.observability.tracing import (
+    record_event,
+    set_trace_input,
+    set_trace_outcome,
+    tag_trace,
+)
 from bas_assistant.runtime import AppRuntime
 
 logger = logging.getLogger(__name__)
@@ -163,6 +170,9 @@ def open_turn(
             action="input_redacted",
             detail={"entities": redaction.counts},
         )
+    # The trace input is the redacted question, the same string as the requests row.
+    tag_trace(request_id, thread_id, user.role)
+    set_trace_input(question)
     return OpenTurn(
         request_id, thread_id, user, question, new_thread, cached, now, time.perf_counter()
     )
@@ -173,6 +183,7 @@ def _elapsed_ms(turn: OpenTurn) -> int:
 
 
 def _respond(result: TurnResult, turn: OpenTurn, state: AgentState | None) -> AskResponse:
+    set_trace_outcome(result.decision, result.route, result.answer, cache_hit=state is None)
     return AskResponse.model_validate(
         result.model_dump()
         | {
@@ -204,22 +215,24 @@ def serve_from_cache(runtime: AppRuntime, turn: OpenTurn, cached: TurnResult) ->
 
 
 def invoke_graph(runtime: AppRuntime, turn: OpenTurn) -> None:
-    runtime.graph.invoke(
-        turn_input(turn.request_id, turn.question, turn.user),
-        thread_config(turn.thread_id),
-        context=runtime.agent,
-    )
+    with ACTIVE_THREADS.track_inprogress():
+        runtime.graph.invoke(
+            turn_input(turn.request_id, turn.question, turn.user),
+            thread_config(turn.thread_id),
+            context=runtime.agent,
+        )
 
 
 def stream_graph(runtime: AppRuntime, turn: OpenTurn) -> Iterator[str]:
     """Yield each node name as it finishes."""
-    for update in runtime.graph.stream(
-        turn_input(turn.request_id, turn.question, turn.user),
-        thread_config(turn.thread_id),
-        context=runtime.agent,
-        stream_mode="updates",
-    ):
-        yield from (name for name in update if name != "__interrupt__")
+    with ACTIVE_THREADS.track_inprogress():
+        for update in runtime.graph.stream(
+            turn_input(turn.request_id, turn.question, turn.user),
+            thread_config(turn.thread_id),
+            context=runtime.agent,
+            stream_mode="updates",
+        ):
+            yield from (name for name in update if name != "__interrupt__")
 
 
 def _citations(state: AgentState) -> list[Citation]:
@@ -252,9 +265,17 @@ def close_turn(runtime: AppRuntime, turn: OpenTurn) -> AskResponse:
     )
     cited = state.draft.citations if state.draft else []
     record_request_chunks(runtime.agent.engine, turn.request_id, state.retrieved, cited)
+    observe_validation(state.attempts, failed=state.decision == "failed")
+    if decision == "paused":
+        record_event("gate paused", {"ticket_id": str(state.ticket_id)})
     # A rejected answer still cost model calls, so it keeps its place in the allowance.
     _audit_decision(runtime, turn, decision, state.route)
-    logger.info("request %s decision=%s route=%s", turn.request_id, decision, state.route)
+    logger.info(
+        "request closed decision=%s route=%s",
+        decision,
+        state.route,
+        extra={"request_id": str(turn.request_id)},
+    )
     result = TurnResult(
         answer=state.final_answer,
         citations=_citations(state),
@@ -268,8 +289,8 @@ def close_turn(runtime: AppRuntime, turn: OpenTurn) -> AskResponse:
     return _respond(result, turn, state)
 
 
-def fail_turn(runtime: AppRuntime, turn: OpenTurn) -> None:
-    """Every model deployment failed: record it and give the user their question back."""
+def fail_turn(runtime: AppRuntime, turn: OpenTurn, reason: str) -> None:
+    """A server-side failure: record it and give the user their question back."""
     close_request(
         runtime.agent.engine,
         turn.request_id,
@@ -277,4 +298,4 @@ def fail_turn(runtime: AppRuntime, turn: OpenTurn) -> None:
     )
     refund_allowance(runtime.redis, turn.user.id, turn.opened_at)
     _audit_decision(runtime, turn, "failed", None)
-    logger.warning("request %s failed: model unavailable", turn.request_id)
+    logger.warning("request failed: %s", reason, extra={"request_id": str(turn.request_id)})

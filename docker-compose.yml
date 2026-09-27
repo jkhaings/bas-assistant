@@ -1,8 +1,20 @@
 # Sessions A+B: app, migrate (one-shot), postgres+pgvector, redis, litellm.
-# Sessions C-D add langfuse, prometheus, grafana.
+# Session D: prometheus, grafana, and Langfuse (deploy/langfuse/compose.yml).
+
+include:
+  - deploy/langfuse/compose.yml
+
+# Every container's log is capped: Docker's default json-file log grows without limit, and on
+# Sep 27 one container's log filled the 58 GB Docker disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 50m
+    max-file: "2"
 
 services:
   app:
+    logging: *logging
     build: .
     image: bas-assistant-app:local
     env_file: ${HOME}/.bas-assistant.env
@@ -24,10 +36,12 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 30s
+      # Healthy only once the reranker is in memory; a fresh volume downloads it first.
+      start_period: 120s
     restart: unless-stopped
 
   migrate:
+    logging: *logging
     build: .
     image: bas-assistant-app:local
     env_file: ${HOME}/.bas-assistant.env
@@ -38,6 +52,7 @@ services:
     restart: "no"
 
   postgres:
+    logging: *logging
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: bas_assistant
@@ -56,6 +71,7 @@ services:
     restart: unless-stopped
 
   redis:
+    logging: *logging
     image: redis:7-alpine
     # Published on localhost for make test-int and make eval.
     ports:
@@ -68,6 +84,7 @@ services:
     restart: unless-stopped
 
   litellm:
+    logging: *logging
     # main-stable, pinned by digest (LiteLLM 1.102.1).
     image: ghcr.io/berriai/litellm-database:main-stable@sha256:c38fe5eff11874941a21f5630ceb842f640dee7d5d5cde440b60ed0a71798f33
     # The env file holds the Postgres password as POSTGRES_PASSWORD and compose cannot
@@ -95,6 +112,52 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  prometheus:
+    logging: *logging
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  grafana:
+    logging: *logging
+    image: grafana/grafana:13.2.2
+    # Only its two passwords (`make observability-secrets`): Grafana is publicly reachable, so
+    # it gets no vendor key. grafana.ini reads the admin one, the data source the other.
+    env_file: ${HOME}/.bas-assistant-grafana.env
+    volumes:
+      - ./deploy/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/grafana/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
 volumes:
   pgdata:
   model_cache:
+  promdata:
+  grafana_data:
