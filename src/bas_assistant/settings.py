@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     # Non-secret operational config. URL defaults are the docker compose service names.
     daily_usd_cap: Decimal = Decimal("3")
     user_daily_questions: int = 50
+    # Per IP per minute. Every visitor of a role shares its demo user, so this is the
+    # per-visitor control on the public link.
+    ip_rate_limit: int = 20
     # Part of the answer-cache key: bump when the corpus changes so no stale answer survives.
     corpus_version: str = "1"
     redis_url: str = "redis://redis:6379/0"
@@ -63,10 +66,10 @@ class Settings(BaseSettings):
 
     # Retrieval
     rerank_model: str = "BAAI/bge-reranker-base"
-    # Tuned in session A against the real corpus (see data/top20_questions.md):
-    # the 15 answerable questions' top score was 0.55-0.99; the out-of-scope
-    # and ACL-blocked-role cases topped out at 0.46. Below this, /ask abstains.
-    rerank_threshold: float = 0.5
+    # Re-tuned in session C against the real corpus (data/top20_questions.md), after the
+    # reranker started reading each chunk with its document title: the answerable rows'
+    # top score is 0.93-1.00, the must-abstain rows top out at 0.53. Below this, /ask abstains.
+    rerank_threshold: float = 0.7
 
     @property
     def database_url(self) -> str:

@@ -12,6 +12,7 @@ import httpx
 import pytest
 from redis import Redis
 
+from bas_assistant.agent.prompts import PROMPT_VERSION
 from bas_assistant.cost.cache import cache_key
 from bas_assistant.settings import Settings
 
@@ -35,7 +36,7 @@ def _forget(question: str, role: str) -> None:
     """Drop a cached answer so the first ask of a run really reaches the models."""
     settings = Settings()
     with Redis.from_url(os.environ["REDIS_URL"]) as redis:
-        redis.delete(cache_key(question, role, settings.corpus_version))
+        redis.delete(cache_key(question, role, settings.corpus_version, PROMPT_VERSION))
 
 
 def _ask(app: httpx.Client, question: str, role: str) -> dict[str, Any]:

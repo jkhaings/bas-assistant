@@ -78,6 +78,7 @@ def _runtime(
         daily_usd_cap=Decimal(1000),
         user_daily_questions=1000,
         corpus_version=str(uuid4()),
+        ip_rate_limit=1000,
     )
 
 
@@ -99,7 +100,7 @@ def test_paused_ticket_survives_a_restart_and_is_filed_on_approval(
         approved = client.post(
             "/approve",
             json={"thread_id": asked.json()["thread_id"], "approve": True},
-            headers={"X-Admin-Token": _ADMIN_TOKEN},
+            headers={"X-Admin-Token": _ADMIN_TOKEN, "X-Demo-Role": "admin"},
         )
         history = client.get(
             f"/threads/{asked.json()['thread_id']}/history", headers={"X-Demo-Role": "engineer"}

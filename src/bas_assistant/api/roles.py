@@ -19,7 +19,7 @@ _ACL_GROUPS: dict[str, list[str]] = {
 _TOOLS: dict[str, list[str]] = {
     "support": [],
     "engineer": ["create_ticket"],
-    "admin": ["create_ticket"],
+    "admin": ["create_ticket", "approve_ticket"],
 }
 
 

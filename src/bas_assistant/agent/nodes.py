@@ -18,11 +18,13 @@ from bas_assistant.agent.state import (
     Retriever,
     Turn,
 )
-from bas_assistant.agent.validate import find_violations
+from bas_assistant.api.roles import Role, acl_groups_for_role
 from bas_assistant.audit import write_audit
 from bas_assistant.cost.usage import record_usage
+from bas_assistant.guardrails.input import injection_pattern
+from bas_assistant.guardrails.output import find_violations
 from bas_assistant.llm.gateway import complete
-from bas_assistant.llm.router import classify
+from bas_assistant.llm.router import RefusalKind, classify
 
 ANSWER_MAX_TOKENS = 700
 MAX_ANSWER_ATTEMPTS = 2
@@ -34,6 +36,15 @@ NO_TICKET_NOTE = "A ticket was suggested, but this role cannot create tickets."
 TICKET_WITHOUT_DOCS_MESSAGE = (
     "The documentation does not cover this, so I drafted a ticket for an admin to review."
 )
+REFUSAL_MESSAGES: dict[RefusalKind, str] = {
+    "injection": (
+        "I can't follow instructions that change how I work. "
+        "Ask me a question about the product documentation instead."
+    ),
+    "off_topic": "I only answer questions about the products in the documentation.",
+}
+# The model's reason is audited, not shown; a cap keeps a runaway reason out of the row.
+REFUSAL_REASON_CHARS = 200
 
 Update = dict[str, object]
 
@@ -45,14 +56,57 @@ class AgentContext:
     retrieve: Retriever
 
 
+def screen(state: AgentState) -> Update:
+    """The pattern half of the injection rail: code only, so an obvious attempt costs $0."""
+    matched = injection_pattern(state.question)
+    if matched is None:
+        return {}
+    return {"refusal": "injection", "refusal_rail": "pattern", "refusal_reason": matched}
+
+
+def after_screen(state: AgentState) -> Literal["refuse", "route"]:
+    return "refuse" if state.refusal else "route"
+
+
 def route(state: AgentState, runtime: Runtime[AgentContext]) -> Update:
-    chosen, topic, usage = classify(runtime.context.llm, state.question)
-    record_usage(runtime.context.engine, state.request_id, "router", usage)
-    return {"route": chosen, "topic": topic}
+    triage = classify(runtime.context.llm, state.question)
+    record_usage(runtime.context.engine, state.request_id, "router", triage.usage)
+    update: Update = {"route": triage.route, "topic": triage.topic}
+    if triage.refusal is not None:
+        update |= {
+            "refusal": triage.refusal,
+            "refusal_rail": "model",
+            "refusal_reason": triage.reason[:REFUSAL_REASON_CHARS],
+        }
+    return update
+
+
+def after_route(state: AgentState) -> Literal["refuse", "retrieve"]:
+    return "refuse" if state.refusal else "retrieve"
+
+
+def refuse(state: AgentState, runtime: Runtime[AgentContext]) -> Update:
+    assert state.refusal is not None, "refuse is only reached with a refusal"
+    write_audit(
+        runtime.context.engine,
+        state.request_id,
+        actor="input_rail",
+        action="input_refused",
+        detail={
+            "rail": state.refusal_rail,
+            "kind": state.refusal,
+            "reason": state.refusal_reason,
+        },
+    )
+    return {"decision": "refused", "final_answer": REFUSAL_MESSAGES[state.refusal]}
 
 
 def retrieve(state: AgentState, runtime: Runtime[AgentContext]) -> Update:
-    result = runtime.context.retrieve(state.question, state.user.acl_groups)
+    # The SQL filter is always the role's own groups, whatever else the state carries.
+    acl_groups = acl_groups_for_role(Role(state.user.role))
+    if acl_groups != state.user.acl_groups:
+        raise PermissionError(f"user context for {state.user.role} does not match its ACL groups")
+    result = runtime.context.retrieve(state.question, acl_groups)
     if result.embed is not None:
         record_usage(runtime.context.engine, state.request_id, "embed", result.embed)
     return {

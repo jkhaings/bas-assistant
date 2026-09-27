@@ -1,29 +1,27 @@
-"""One cheap `fast` call decides whether a question needs the strong model."""
+"""One cheap `fast` call routes the question and flags injection or off-topic requests."""
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from bas_assistant.agent.prompts import ROUTER_PROMPT
 from bas_assistant.llm.gateway import Usage, complete
 
 logger = logging.getLogger(__name__)
 
 Route = Literal["fast", "strong"]
+RefusalKind = Literal["injection", "off_topic"]
+
+# Room for the flags and a one-sentence reason next to the route and topic.
+ROUTER_MAX_TOKENS = 120
 
 # The topic is echoed to the user when the graph abstains, and it never passes the answer
 # validator, so only short plain words survive (no ':', '/' or '.', hence no links).
 _PLAIN_TOPIC = re.compile(r"[\w ,'-]{1,60}")
-
-ROUTER_PROMPT = (
-    "Classify a staff question about building-automation products.\n"
-    "simple: one fact from one document (a spec, a part number, a supported protocol).\n"
-    "complex: comparing products, combining several documents, troubleshooting, or "
-    "anything that needs reasoning across steps.\n"
-    "topic: two to five words naming the product or subject."
-)
 
 
 class RouteDecision(BaseModel):
@@ -31,24 +29,43 @@ class RouteDecision(BaseModel):
 
     complexity: Literal["simple", "complex"]
     topic: str
+    is_injection: bool
+    is_off_topic: bool
+    reason: str
 
 
-def classify(client: httpx.Client, question: str) -> tuple[Route, str, Usage]:
-    """Return (route, topic, usage) for the question."""
+@dataclass(frozen=True)
+class Classification:
+    route: Route
+    topic: str
+    # Set when the question must be refused; the reason is audited, never shown.
+    refusal: RefusalKind | None
+    reason: str
+    usage: Usage
+
+
+def _refusal(decision: RouteDecision) -> RefusalKind | None:
+    if decision.is_injection:
+        return "injection"
+    return "off_topic" if decision.is_off_topic else None
+
+
+def classify(client: httpx.Client, question: str) -> Classification:
     completion = complete(
         client,
         "fast",
         [{"role": "system", "content": ROUTER_PROMPT}, {"role": "user", "content": question}],
         RouteDecision,
-        max_tokens=60,
+        max_tokens=ROUTER_MAX_TOKENS,
     )
     try:
         decision = RouteDecision.model_validate_json(completion.content)
     except ValidationError:
-        # A malformed routing answer should cost quality, not the request: use the strong model.
+        # A malformed routing answer should cost quality, not the request: use the strong
+        # model. The pattern rail has already run, and the output fence still applies.
         logger.warning("router returned invalid output; routing to strong")
-        return "strong", "", completion.usage
+        return Classification("strong", "", None, "", completion.usage)
     route: Route = "strong" if decision.complexity == "complex" else "fast"
     topic = decision.topic if _PLAIN_TOPIC.fullmatch(decision.topic) else ""
     logger.info("routed to %s", route)
-    return route, topic, completion.usage
+    return Classification(route, topic, _refusal(decision), decision.reason, completion.usage)

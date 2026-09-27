@@ -10,13 +10,17 @@ from decimal import Decimal
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 Alias = Literal["fast", "strong", "embed"]
 
 
 class GatewayError(Exception):
     """The proxy could not serve the alias, after its own retries and fallbacks."""
+
+
+class KeyBudgetError(GatewayError):
+    """The proxy refused the app's virtual key: its budget for the period is spent."""
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,25 @@ class Completion:
     usage: Usage
 
 
+class _ErrorDetail(BaseModel):
+    type: str | None = None
+
+
+class _ErrorBody(BaseModel):
+    error: _ErrorDetail
+
+
+def _is_budget_refusal(response: httpx.Response) -> bool:
+    # LiteLLM answers a spent virtual key with 429 and error type "budget_exceeded"
+    # (checked live against the pinned proxy with a max_budget 0 key).
+    if response.status_code != httpx.codes.TOO_MANY_REQUESTS:
+        return False
+    try:
+        return _ErrorBody.model_validate_json(response.text).error.type == "budget_exceeded"
+    except ValidationError:
+        return False
+
+
 class _TokenDetails(BaseModel):
     cached_tokens: int | None = None
 
@@ -52,13 +75,16 @@ def _post(client: httpx.Client, path: str, body: dict[str, object]) -> tuple[htt
     try:
         response = client.post(path, json=body)
         response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if _is_budget_refusal(exc.response):
+            raise KeyBudgetError(f"{body['model']}: virtual key budget spent") from exc
+        raise GatewayError(f"{body['model']}: {exc}") from exc
     except httpx.HTTPError as exc:
-        # TODO(session C): a virtual-key budget refusal should become 429, not 503.
         raise GatewayError(f"{body['model']}: {exc}") from exc
     return response, round((time.perf_counter() - started) * 1000)
 
 
-def _usage(alias: Alias, response: httpx.Response, latency_ms: int) -> Usage:
+def parse_usage(alias: Alias, response: httpx.Response, latency_ms: int) -> Usage:
     # The deployment id is "<provider>/<model>" in config/litellm.yaml, so a
     # fallback shows up here as the model that actually answered.
     deployment = response.headers.get("x-litellm-model-id", f"unknown/{alias}")
@@ -101,4 +127,4 @@ def complete(
     }
     response, latency_ms = _post(client, "/v1/chat/completions", body)
     content = response.json()["choices"][0]["message"]["content"] or ""
-    return Completion(content=content, usage=_usage(alias, response, latency_ms))
+    return Completion(content=content, usage=parse_usage(alias, response, latency_ms))

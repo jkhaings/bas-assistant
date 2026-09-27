@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Protocol
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, func, literal_column, select
 from sqlalchemy.orm import Session, joinedload
 
 from bas_assistant.db.corpus import Chunk, Document, Parent
@@ -69,12 +69,17 @@ class PgVectorStore:
 
     def lexical_candidates(self, query: str, acl_groups: list[str]) -> dict[uuid.UUID, int]:
         tsquery = _or_tsquery(query)
+        # A short section ("## Power / 24 VDC (20 W max) ...") rarely names its product, so
+        # the document title joins the chunk's words, weighted above them. Computed per
+        # query: no index covers it, which is fine at a few thousand chunks.
+        title = func.setweight(func.to_tsvector("english", Document.title), literal_column("'A'"))
+        titled_tsv = title.op("||")(Chunk.tsv)
         stmt = (
             select(Chunk.id)
             .join(Document, Chunk.document_id == Document.id)
             .where(Document.acl_groups.op("&&")(acl_groups))
-            .where(Chunk.tsv.op("@@")(tsquery))
-            .order_by(func.ts_rank(Chunk.tsv, tsquery).desc())
+            .where(titled_tsv.op("@@")(tsquery))
+            .order_by(func.ts_rank(titled_tsv, tsquery).desc())
             .limit(CANDIDATE_LIMIT)
         )
         ids = self._session.scalars(stmt).all()

@@ -6,8 +6,8 @@ from sqlalchemy import Engine, select
 
 from bas_assistant.agent.nodes import FAILED_MESSAGE, TICKET_WITHOUT_DOCS_MESSAGE
 from bas_assistant.agent.state import AnswerOut, TicketDraft
-from bas_assistant.agent.validate import find_violations
 from bas_assistant.db.activity import Audit, Request
+from bas_assistant.guardrails.output import find_violations
 from tests.graph_fakes import (
     ADMIN_TOKEN,
     CHUNK_1,
@@ -49,7 +49,7 @@ def test_fabricated_citation_is_retried_then_fails_closed(
     assert len(proxy.answer_calls()) == 2
     with engine.connect() as conn:
         actions: list[str] = list(conn.execute(select(Audit.action)).scalars())
-    assert actions == ["answer_rejected"]
+    assert actions == ["answer_rejected", "decision"]
 
 
 def test_rejected_answer_is_retried_with_the_violations_listed(
@@ -106,8 +106,10 @@ def test_url_outside_the_passage_sources_is_a_violation() -> None:
 )
 def test_every_followable_link_outside_the_sources_is_a_violation(answer: str) -> None:
     violations = find_violations(_draft(answer), PASSAGES)
-    assert violations
-    assert all(v.startswith("link ") for v in violations)
+    assert any(v.startswith("link ") for v in violations)
+    # The one non-link violation any of these may add: the mailto address is personal data.
+    others = [v for v in violations if not v.startswith("link ")]
+    assert others in ([], ["the answer contains a EMAIL_ADDRESS that is not in the passages"])
 
 
 def test_markdown_link_to_a_source_url_is_allowed() -> None:
@@ -178,7 +180,7 @@ def test_ticket_for_something_the_docs_do_not_cover_shows_a_fixed_message(
     client.post(
         "/approve",
         json={"thread_id": body["thread_id"], "approve": True},
-        headers={"X-Admin-Token": ADMIN_TOKEN},
+        headers={"X-Admin-Token": ADMIN_TOKEN, "X-Demo-Role": "admin"},
     )
 
     assert body["decision"] == "paused"
@@ -217,3 +219,22 @@ def test_role_without_tickets_abstains_when_the_docs_do_not_cover_it(
     assert body["decision"] == "abstained"
     assert "couldn't find this in the documentation" in body["answer"]
     assert (body["ticket_id"], body["notes"]) == (None, [])
+
+
+def test_personal_data_the_passages_do_not_contain_is_a_violation() -> None:
+    violations = find_violations(
+        _draft("4 W at 24 VAC. Ask Jane Doe at jane.doe@example.com."), PASSAGES
+    )
+
+    assert violations == [
+        "the answer contains a EMAIL_ADDRESS that is not in the passages",
+        "the answer contains a PERSON that is not in the passages",
+    ]
+
+
+def test_contact_details_quoted_from_a_passage_are_allowed() -> None:
+    passage = PASSAGES[0].model_copy(
+        update={"text": "Support line: 604-574-9444. The sample controller draws 4 W."}
+    )
+
+    assert find_violations(_draft("Call support on 604-574-9444."), [passage]) == []

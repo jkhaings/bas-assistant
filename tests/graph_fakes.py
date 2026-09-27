@@ -81,10 +81,15 @@ def answer_json(
 @dataclass
 class FakeProxy:
     complexity: str = "simple"
+    # Set to make the router flag the question, as the real model would for an attack.
+    injection: bool = False
+    off_topic: bool = False
     # Raw router output to send instead of a well-formed RouteDecision.
     route_reply: str | None = None
     answers: list[str] = field(default_factory=list)
     down: set[str] = field(default_factory=set)
+    # The app's virtual key has spent its budget: LiteLLM's real refusal (429, budget_exceeded).
+    budget_spent: bool = False
     # Request bodies as the app sent them (decoded JSON).
     calls: list[dict[str, Any]] = field(default_factory=list)
 
@@ -94,6 +99,9 @@ class FakeProxy:
         self.calls.append(body)
         if alias in self.down:
             return httpx.Response(503, json={"error": {"message": f"{alias} unavailable"}})
+        if self.budget_spent:
+            error = {"message": "Budget has been exceeded!", "type": "budget_exceeded"}
+            return httpx.Response(429, json={"error": error | {"code": "429"}})
         headers = {
             "x-litellm-model-id": DEPLOYMENTS[alias],
             "x-litellm-response-cost": COST_USD[alias],
@@ -108,7 +116,17 @@ class FakeProxy:
 
     def _reply(self, schema_name: str) -> str:
         if schema_name == "RouteDecision":
-            topic_json = json.dumps({"complexity": self.complexity, "topic": "controller power"})
+            topic_json = json.dumps(
+                {
+                    "complexity": self.complexity,
+                    "topic": "controller power",
+                    "is_injection": self.injection,
+                    "is_off_topic": self.off_topic,
+                    "reason": "flagged by the fake router"
+                    if self.injection or self.off_topic
+                    else "",
+                }
+            )
             return self.route_reply if self.route_reply is not None else topic_json
         return self.answers.pop(0) if self.answers else answer_json()
 

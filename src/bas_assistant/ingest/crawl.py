@@ -14,6 +14,7 @@ from xml.etree import ElementTree
 import httpx
 from pydantic import BaseModel
 from selectolax.parser import HTMLParser
+from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 
 from bas_assistant.ingest.sources import (
     BASE_URL,
@@ -31,6 +32,25 @@ from bas_assistant.ingest.sources import (
 logger = logging.getLogger(__name__)
 
 _SITEMAP_NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+
+FETCH_ATTEMPTS = 4
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """A network failure or a server-side error is worth another try; a 4xx is not."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return httpx.codes.is_server_error(status) or status == httpx.codes.TOO_MANY_REQUESTS
+    return isinstance(exc, httpx.TransportError)
+
+
+# Backoff starts at the robots.txt crawl delay, so a retry is never faster than a fetch.
+_RETRY = Retrying(
+    stop=stop_after_attempt(FETCH_ATTEMPTS),
+    wait=wait_exponential(multiplier=CRAWL_DELAY_SECONDS, max=60),
+    retry=retry_if_exception(_is_transient),
+    reraise=True,
+)
 
 
 class RawSource(BaseModel):
@@ -51,8 +71,18 @@ def _cache_path(url: str, raw_dir: Path) -> Path:
     return raw_dir / f"{digest}{suffix}"
 
 
+def _get(client: httpx.Client, url: str) -> httpx.Response:
+    response = client.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
+    response.raise_for_status()
+    return response
+
+
 def fetch(url: str, raw_dir: Path, client: httpx.Client, robots: RobotFileParser) -> bytes | None:
-    """Fetch a URL through the on-disk cache. None means disallowed, missing, or an HTTP error."""
+    """Fetch a URL through the on-disk cache, retrying transient failures with backoff.
+
+    None means disallowed, missing, or still failing after every attempt; one unreachable
+    URL never ends the crawl.
+    """
     cached = _cache_path(url, raw_dir)
     if cached.exists():
         return cached.read_bytes()
@@ -61,9 +91,8 @@ def fetch(url: str, raw_dir: Path, client: httpx.Client, robots: RobotFileParser
         return None
     time.sleep(CRAWL_DELAY_SECONDS)
     try:
-        response = client.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
+        response = _RETRY(_get, client, url)
+    except httpx.HTTPError as exc:
         logger.warning("skipping %s: %s", url, exc)
         return None
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -144,8 +173,8 @@ def _load_robots(client: httpx.Client) -> RobotFileParser:
     "disallow everything", silently blocking every URL. Fetching with our own
     identified User-Agent (as every other request here does) avoids that.
     """
-    response = client.get(f"{BASE_URL}/robots.txt", headers={"User-Agent": USER_AGENT})
-    response.raise_for_status()
+    # No crawl without robots.txt: this one still fails loudly after its retries.
+    response = _RETRY(_get, client, f"{BASE_URL}/robots.txt")
     robots = RobotFileParser()
     robots.parse(response.text.splitlines())
     return robots
