@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     ip_rate_limit: int = 20
     # Part of the answer-cache key: bump when the corpus or the retrieval over it changes, so
     # no stale answer survives ("2": the session D reranker).
+    # TODO(session E): a first ingest does not bump it, so abstains cached while the corpus was
+    # empty are served for their 24 h TTL; ingest before the link opens, or flush answer:*.
     corpus_version: str = "2"
     redis_url: str = "redis://redis:6379/0"
     litellm_base_url: str = "http://litellm:4000"

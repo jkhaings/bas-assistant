@@ -10,6 +10,7 @@ langchain-openai are not in the app image.
 
 import logging
 import os
+import sys
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -138,6 +139,12 @@ def main() -> None:
     lines = (RESULTS_DIR / "golden-latest.jsonl").read_text().splitlines()
     results = [GoldenResult.model_validate_json(line) for line in lines]
     answered = [result for result in results if result.decision == "answered"]
+    if not answered:
+        # RAGAS scores answers against their passages; an empty dataset is an IndexError there.
+        sys.exit(
+            f"ragas_run: none of the {len(results)} results in golden-latest.jsonl was answered, "
+            "so there is nothing to score and no eval_runs row is written."
+        )
     try:
         rows = _score(answered, engine, settings, meter)
     finally:

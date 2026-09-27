@@ -388,6 +388,13 @@ locations and tests, and the OWASP LLM Top 10 (2025) mapping.
     expected product key.
   - An abstain row passes when the decision is `abstained` with no citations.
   - Per-case results go to `eval/results/golden-latest.jsonl` (gitignored).
+  - The `tests/eval` modules share one client (`tests/eval/conftest.py`). `evals/pacing.pacing_hook`
+    holds it to `IP_RATE_LIMIT` requests in any 61 s (the app's window plus a second), counting
+    every request it sends. The app sees the dev host as one address (the compose network's
+    gateway, not 127.0.0.1) and exempts no address, so other traffic from the host in the same
+    minute (`make redteam`, the UI) shares the app's budget without the pacer seeing it.
+  - It empties the results file first, so a run that stops early leaves RAGAS nothing to score.
+    With `GET /documents` empty (a stack that was never ingested) it stops before asking anything.
 - **RAGAS** (`eval/ragas_run.py`, dev only; judge metering, category means and the summary are in
   `evals/scoring.py`, which is unit-tested): faithfulness, answer relevancy, context precision (with
   reference) and context recall over the answered rows.
@@ -403,6 +410,7 @@ locations and tests, and the OWASP LLM Top 10 (2025) mapping.
     `overall` and `by_category` are what session D's Quality & adoption dashboard reads. Cost is
     the golden answers' usage plus the judge usage.
   - It also writes `eval/results/latest.md`, which make prints.
+  - When no golden row was answered it exits 1 with a message and writes nothing.
 - **`GET /evals/latest`** returns the newest `golden` and `redteam` runs for the Evals tab.
 - **Red team**: section 7.
 - **Deferred**: promptfoo, the LangSmith dataset and k6 (out of weekend scope). Flag-to-golden-row

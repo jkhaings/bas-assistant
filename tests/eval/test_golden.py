@@ -24,10 +24,6 @@ from bas_assistant.settings import Settings
 
 pytestmark = pytest.mark.eval
 
-APP_URL = "http://localhost:8000"
-# Above the app's worst case: the router and the answer call can each take 130 s through the
-# proxy's fallbacks, plus the CPU reranker.
-TIMEOUT_S = 330
 EVAL_DIR = Path(__file__).parents[2] / "eval"
 RESULTS = EVAL_DIR / "results" / "golden-latest.jsonl"
 CASES = load_cases(EVAL_DIR / "golden.jsonl")
@@ -47,11 +43,17 @@ def _run_case(app: httpx.Client, redis: Redis, case: GoldenCase, role: str) -> G
 
 
 @pytest.fixture(scope="module")
-def results() -> dict[tuple[int, str], GoldenResult]:
-    with (
-        httpx.Client(base_url=APP_URL, timeout=TIMEOUT_S) as app,
-        Redis.from_url(os.environ["REDIS_URL"]) as redis,
-    ):
+def results(app: httpx.Client) -> dict[tuple[int, str], GoldenResult]:
+    # Emptied first: a run that stops early must leave eval/ragas_run.py nothing to score, not
+    # the previous run's results.
+    RESULTS.write_text("")
+    # An empty corpus abstains on every question, which reads as a retrieval failure. Engineer
+    # sees every ACL group, so no documents means nothing was ingested.
+    documents = app.get("/documents", headers={"X-Demo-Role": "engineer"})
+    documents.raise_for_status()
+    if not documents.json():
+        pytest.exit("The app's corpus is empty: run `make ingest`, then `make eval`.", returncode=1)
+    with Redis.from_url(os.environ["REDIS_URL"]) as redis:
         graded = {(case.id, role): _run_case(app, redis, case, role) for case, role in RUNS}
     RESULTS.parent.mkdir(exist_ok=True)
     RESULTS.write_text("".join(result.model_dump_json() + "\n" for result in graded.values()))
