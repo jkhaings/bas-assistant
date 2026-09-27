@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from bas_assistant.agent import api as agent_api
 from bas_assistant.agent.corpus import search_corpus
-from bas_assistant.api import ask, documents
+from bas_assistant.api import ask, documents, evals
 from bas_assistant.cost import api as cost_api
 from bas_assistant.retrieval.embeddings import OpenAIEmbedder
 from bas_assistant.runtime import open_runtime
@@ -36,6 +36,7 @@ def create_app(lifespan: Lifespan) -> FastAPI:
     app.include_router(cost_api.router)
     app.include_router(ask.router)
     app.include_router(documents.router)
+    app.include_router(evals.router)
     return app
 
 

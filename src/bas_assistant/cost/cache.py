@@ -1,4 +1,4 @@
-"""Exact-match answer cache: same normalized question, role and corpus version cost $0."""
+"""Exact-match answer cache: the same normalized question, role, corpus and prompts cost $0."""
 
 import hashlib
 from datetime import timedelta
@@ -9,9 +9,10 @@ from redis import Redis
 TTL = timedelta(hours=24)
 
 
-def cache_key(question: str, role: str, corpus_version: str) -> str:
+def cache_key(question: str, role: str, corpus_version: str, prompt_version: str) -> str:
     normalized = " ".join(question.lower().split())
-    digest = hashlib.sha256(f"{normalized}\n{role}\n{corpus_version}".encode()).hexdigest()
+    parts = f"{normalized}\n{role}\n{corpus_version}\n{prompt_version}"
+    digest = hashlib.sha256(parts.encode()).hexdigest()
     return f"answer:{digest}"
 
 

@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel
 from sqlalchemy import Engine, insert, select, update
 
+from bas_assistant.agent.prompts import PROMPT_VERSION
 from bas_assistant.agent.state import Passage, TicketDraft, UserContext
 from bas_assistant.db.activity import Request, RequestChunk, Thread, Ticket, User
 
@@ -55,6 +56,7 @@ def open_request(
                 user_id=user.id,
                 role=user.role,
                 question_redacted=question_redacted,
+                prompt_version=PROMPT_VERSION,
             )
         )
 

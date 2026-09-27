@@ -31,6 +31,8 @@ class AppRuntime:
     daily_usd_cap: Decimal
     user_daily_questions: int
     corpus_version: str
+    # Per IP per minute: with no login, the only control that separates one visitor from another.
+    ip_rate_limit: int
 
 
 def checkpoint_pool(database_url: str) -> ConnectionPool[Connection[DictRow]]:
@@ -69,6 +71,7 @@ def open_runtime(settings: Settings, retrieve: Retriever) -> Iterator[AppRuntime
             daily_usd_cap=settings.daily_usd_cap,
             user_daily_questions=settings.user_daily_questions,
             corpus_version=settings.corpus_version,
+            ip_rate_limit=settings.ip_rate_limit,
         )
     engine.dispose()
 

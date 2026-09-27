@@ -15,7 +15,16 @@ from sqlalchemy.pool import StaticPool
 
 from bas_assistant.agent.graph import CHECKPOINT_SERDE, build_graph
 from bas_assistant.agent.nodes import AgentContext
-from bas_assistant.db.activity import Audit, Request, RequestChunk, Thread, Ticket, Usage, User
+from bas_assistant.db.activity import (
+    Audit,
+    EvalRun,
+    Request,
+    RequestChunk,
+    Thread,
+    Ticket,
+    Usage,
+    User,
+)
 from bas_assistant.db.engine import Base
 from bas_assistant.runtime import AppRuntime
 from tests.graph_fakes import ADMIN_TOKEN, FakeProxy, FakeRetriever, make_client
@@ -27,7 +36,7 @@ def engine() -> Iterator[Engine]:
         "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False}
     )
     # Only the activity tables the graph writes: the corpus tables use Postgres-only types.
-    tables = [User, Thread, Request, RequestChunk, Usage, Ticket, Audit]
+    tables = [User, Thread, Request, RequestChunk, Usage, Ticket, Audit, EvalRun]
     Base.metadata.create_all(engine, tables=[model.__table__ for model in tables])  # type: ignore[misc]
     with engine.begin() as conn:
         conn.execute(
@@ -69,6 +78,7 @@ def runtime(engine: Engine, redis: Redis, proxy: FakeProxy, retriever: FakeRetri
         daily_usd_cap=Decimal(3),
         user_daily_questions=50,
         corpus_version="test",
+        ip_rate_limit=20,
     )
 
 

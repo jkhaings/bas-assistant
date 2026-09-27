@@ -7,7 +7,14 @@ from urllib.robotparser import RobotFileParser
 import httpx
 import pytest
 
-from bas_assistant.ingest.crawl import _page_source, _pdf_source, extract_pdf_links, fetch
+from bas_assistant.ingest.crawl import (
+    FETCH_ATTEMPTS,
+    _load_robots,
+    _page_source,
+    _pdf_source,
+    extract_pdf_links,
+    fetch,
+)
 from bas_assistant.ingest.sources import CRAWL_DELAY_SECONDS
 
 pytestmark = pytest.mark.unit
@@ -102,3 +109,78 @@ def test_fetch_returns_none_on_an_http_error(
         result = fetch("https://deltacontrols.com/gone.pdf", tmp_path, client, _allow_all_robots())
 
     assert result is None
+
+
+def test_fetch_retries_a_transient_network_error_then_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    outcomes: list[Exception | httpx.Response] = [
+        httpx.ConnectError("Name or service not known"),
+        httpx.Response(503),
+        httpx.Response(200, content=b"catalog"),
+    ]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = fetch("https://deltacontrols.com/flaky.pdf", tmp_path, client, _allow_all_robots())
+
+    assert result == b"catalog"
+    assert outcomes == []
+
+
+def test_fetch_gives_up_on_a_dead_url_and_logs_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    attempts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(str(request.url))
+        raise httpx.ConnectError("Name or service not known")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = fetch("https://deltacontrols.com/dead.pdf", tmp_path, client, _allow_all_robots())
+
+    assert result is None
+    assert len(attempts) == FETCH_ATTEMPTS
+    assert "https://deltacontrols.com/dead.pdf" in caplog.text
+
+
+def test_fetch_does_not_retry_a_client_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    attempts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(str(request.url))
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = fetch("https://deltacontrols.com/gone.pdf", tmp_path, client, _allow_all_robots())
+
+    assert result is None
+    assert len(attempts) == 1
+
+
+def test_robots_txt_is_retried_then_the_crawl_fails_loudly(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    attempts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(str(request.url))
+        raise httpx.ConnectError("Name or service not known")
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(httpx.ConnectError),
+    ):
+        _load_robots(client)
+
+    assert len(attempts) == FETCH_ATTEMPTS

@@ -26,6 +26,10 @@ Running log — add a line whenever a new dependency is added to pyproject.toml.
 | psycopg-pool | ≥3.3 | — | Connection pool the checkpointer requires (session B) |
 | redis | ≥8.1 | functools.lru_cache | Shared answer cache and per-user allowance across workers and restarts (session B) |
 | langchain-core | ≥1.6 | — | Already installed by langgraph; declared because the app imports `RunnableConfig` from it (session B) |
+| presidio-analyzer | ≥2.2.364 | `re` for emails only | Entity-aware PII detection (names, phones, locations, emails) on the question before storage or any model, and on the answer (session C) |
+| presidio-anonymizer | ≥2.2.364 | string slicing | Replaces detected spans with `<ENTITY_TYPE>` and resolves overlaps (session C) |
+| en-core-web-sm | 3.8.0 (wheel URL) | — | The spaCy model Presidio's name and place recognizer needs. `sm` is 12 MB against `lg`'s ~560 MB, so CI and the image stay small. It never tags street lines, so a Presidio `PatternRecognizer` covers those. Not on PyPI, so pinned by release URL (session C) |
+| tenacity | ≥9.1 | a hand-written sleep loop | Already in the lockfile (langchain-core). Retry with exponential backoff on the crawler's transient network and 5xx errors (session C) |
 
 ## Dev / CI
 
@@ -38,6 +42,9 @@ Running log — add a line whenever a new dependency is added to pyproject.toml.
 | fakeredis | — | Stands in for Redis in unit tests (no docker in the unit tier) (session B) |
 | httpx2 | — | starlette 1.x TestClient requires it; typed test helpers (session B) |
 | pyyaml + types-pyyaml | — | Test reads config/litellm.yaml to check aliases and fallback order (session B) |
+| ragas | — | RAGAS faithfulness, answer relevancy, context precision and recall over the golden answers (`eval/ragas_run.py`, `make eval`); dev only, never in the image (session C) |
+| langchain-openai | — | The OpenAI-compatible client RAGAS judges through. It is pointed at the LiteLLM proxy's `fast` and `embed` aliases with the app's virtual key, so no vendor endpoint or vendor key is involved. An httpx hook meters each call as a `judge` usage row. Dev only (session C) |
+| langchain-community | — | Pinned to >=0.4,<0.4.2, not used directly. ragas 0.4.3 imports `langchain_community.chat_models.vertexai`, which 0.4.2 removed, so an unpinned lock breaks `import ragas` (caught by the reviewer; `tests/unit/test_scoring.py` now imports the runner so CI catches it) (session C) |
 
 ## Notes
 

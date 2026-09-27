@@ -63,6 +63,8 @@ class Request(Base):
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     retrieval_ms: Mapped[int | None] = mapped_column(Integer)
     rerank_ms: Mapped[int | None] = mapped_column(Integer)
+    # Which prompt texts produced the answer, so eval runs and flags can be traced to them (0004).
+    prompt_version: Mapped[str | None] = mapped_column(String(20))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -181,6 +183,6 @@ class EvalRun(Base):
     kind: Mapped[str] = mapped_column(String(20), default="golden")  # golden | redteam
     corpus_version: Mapped[str] = mapped_column(String(64))
     prompt_version: Mapped[str] = mapped_column(String(20))
-    scores: Mapped[dict[str, object]] = mapped_column(JSONB)
+    scores: Mapped[dict[str, object]] = mapped_column(_JSONB)
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

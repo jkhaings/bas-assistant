@@ -34,10 +34,12 @@ def session() -> Iterator[Session]:
         yield db_session
 
 
-def _add_document(session: Session, *, acl_groups: list[str], text: str) -> tuple[Document, Chunk]:
+def _add_document(
+    session: Session, *, acl_groups: list[str], text: str, title: str = "Integration Test Doc"
+) -> tuple[Document, Chunk]:
     embedder = FakeEmbedder()
     document = Document(
-        title="Integration Test Doc",
+        title=title,
         source_url=f"https://example.com/{uuid.uuid4()}",
         source_type="pdf",
         product="Test Product",
@@ -62,6 +64,27 @@ def _add_document(session: Session, *, acl_groups: list[str], text: str) -> tupl
     session.add(chunk)
     session.commit()
     return document, chunk
+
+
+def test_lexical_search_finds_a_section_whose_product_is_named_only_in_the_title(
+    session: Session,
+) -> None:
+    product = f"Zx{uuid.uuid4().hex[:8]}"
+    titled, titled_chunk = _add_document(
+        session, acl_groups=["all"], text="## Power\n\n24 VDC (20 W max)", title=product
+    )
+    untitled, untitled_chunk = _add_document(
+        session, acl_groups=["all"], text="Power supply power rating and power wiring."
+    )
+    try:
+        hits = PgVectorStore(session).lexical_candidates(f"power draw of the {product}", ["all"])
+
+        assert titled_chunk.id in hits
+        assert hits[titled_chunk.id] < hits.get(untitled_chunk.id, len(hits) + 1)
+    finally:
+        session.delete(titled)
+        session.delete(untitled)
+        session.commit()
 
 
 def test_support_role_cannot_see_engineer_only_chunk(session: Session) -> None:

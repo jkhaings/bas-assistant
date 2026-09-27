@@ -35,13 +35,13 @@ jobs:
           args: git --redact
 
       - name: ruff check
-        run: uv run ruff check src/ tests/ .claude/hooks/
+        run: uv run ruff check src/ tests/ eval/ .claude/hooks/
 
       - name: ruff format
-        run: uv run ruff format --check src/ tests/ .claude/hooks/
+        run: uv run ruff format --check src/ tests/ eval/ .claude/hooks/
 
       - name: mypy
-        run: uv run mypy src/ tests/ .claude/hooks/
+        run: uv run mypy src/ tests/ eval/ .claude/hooks/
 
       - name: pytest unit
         run: uv run pytest -m unit

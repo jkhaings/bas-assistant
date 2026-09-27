@@ -30,7 +30,9 @@ from bas_assistant.agent.turn import (
     thread_config,
 )
 from bas_assistant.api.roles import Role, acl_groups_for_role, demo_role, tools_for_role
-from bas_assistant.llm.gateway import GatewayError
+from bas_assistant.audit import write_audit
+from bas_assistant.guardrails.limits import limit_detail, limit_error, per_ip_limit
+from bas_assistant.llm.gateway import GatewayError, KeyBudgetError
 from bas_assistant.runtime import AppRuntime, get_runtime
 
 router = APIRouter()
@@ -53,6 +55,20 @@ def require_admin(runtime: Runtime, x_admin_token: Annotated[str, Header()] = ""
         raise HTTPException(401, detail="admin token required")
 
 
+def require_approver(role: Annotated[Role, Depends(demo_role)], runtime: Runtime) -> None:
+    """The token alone is not enough: the role in the switcher must hold the approve tool."""
+    if "approve_ticket" in tools_for_role(role):
+        return
+    write_audit(
+        runtime.agent.engine,
+        None,
+        actor=role.value,
+        action="approve_refused",
+        detail={"reason": "role lacks approve_ticket"},
+    )
+    raise HTTPException(403, detail="this role cannot approve tickets")
+
+
 class AskBody(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     thread_id: UUID | None = None
@@ -67,20 +83,26 @@ def start_turn(
 Started = Annotated[OpenTurn, Depends(start_turn)]
 
 
-@router.post("/ask")
+# The rate limit runs before start_turn, so a rejected request writes no request row.
+@router.post("/ask", dependencies=[Depends(per_ip_limit)])
 def ask(turn: Started, runtime: Runtime) -> AskResponse:
     if turn.cached is not None:
         return serve_from_cache(runtime, turn, turn.cached)
     # TODO(session D): errors other than GatewayError leave the request's decision NULL.
     try:
         invoke_graph(runtime, turn)
+    except KeyBudgetError as exc:
+        fail_turn(runtime, turn)
+        raise limit_error(429, "key_budget_reached", None) from exc
     except GatewayError as exc:
         fail_turn(runtime, turn)
-        raise HTTPException(503, detail={"reason": "model_unavailable"}) from exc
+        raise limit_error(503, "model_unavailable", None) from exc
     return close_turn(runtime, turn)
 
 
-@router.post("/ask/stream", response_class=EventSourceResponse)
+@router.post(
+    "/ask/stream", response_class=EventSourceResponse, dependencies=[Depends(per_ip_limit)]
+)
 def ask_stream(turn: Started, runtime: Runtime) -> Iterator[ServerSentEvent]:
     """Node events as the graph runs, then the validated answer. Answer tokens are not
     streamed: nothing is shown before the validator passes it."""
@@ -90,9 +112,13 @@ def ask_stream(turn: Started, runtime: Runtime) -> Iterator[ServerSentEvent]:
     try:
         for node in stream_graph(runtime, turn):
             yield ServerSentEvent(event="node", data={"node": node})
+    except KeyBudgetError:
+        fail_turn(runtime, turn)
+        yield ServerSentEvent(event="error", data=limit_detail("key_budget_reached", None))
+        return
     except GatewayError:
         fail_turn(runtime, turn)
-        yield ServerSentEvent(event="error", data={"reason": "model_unavailable"})
+        yield ServerSentEvent(event="error", data=limit_detail("model_unavailable", None))
         return
     yield ServerSentEvent(event="answer", data=close_turn(runtime, turn))
 
@@ -108,29 +134,34 @@ class ApproveResponse(BaseModel):
     status: Literal["filed", "rejected"]
 
 
-def _resume_gate(runtime: AppRuntime, thread_id: UUID, approve: bool) -> AgentState:
+def _resume_gate(runtime: AppRuntime, thread_id: UUID, verdict: ApprovalVerdict) -> AgentState:
     config = thread_config(thread_id)
     if not runtime.graph.get_state(config).interrupts:
         raise HTTPException(409, detail="no ticket is waiting for approval on this thread")
-    verdict = ApprovalVerdict(
-        approve=approve, approver_id=demo_user_id(runtime.agent.engine, "admin")
-    )
     runtime.graph.invoke(
         Command(resume=verdict.model_dump(mode="json")), config, context=runtime.agent
     )
     return AgentState.model_validate(runtime.graph.get_state(config).values)
 
 
-@router.post("/approve", dependencies=[Depends(require_admin)])
-def approve(body: ApproveBody, runtime: Runtime) -> ApproveResponse:
+@router.post(
+    "/approve",
+    dependencies=[Depends(per_ip_limit), Depends(require_admin), Depends(require_approver)],
+)
+def approve(
+    body: ApproveBody, role: Annotated[Role, Depends(demo_role)], runtime: Runtime
+) -> ApproveResponse:
     if thread_owner(runtime.agent.engine, body.thread_id) is None:
         raise HTTPException(404, detail="thread not found")
+    verdict = ApprovalVerdict(
+        approve=body.approve, approver_id=demo_user_id(runtime.agent.engine, role.value)
+    )
     # Two approvals at once (a double click) would both resume the same checkpoint.
     lock = f"approve:{body.thread_id}"
     if not runtime.redis.set(lock, "1", nx=True, ex=60):
         raise HTTPException(409, detail="an approval for this thread is already in progress")
     try:
-        state = _resume_gate(runtime, body.thread_id, body.approve)
+        state = _resume_gate(runtime, body.thread_id, verdict)
     finally:
         runtime.redis.delete(lock)
     assert state.ticket_id is not None, "a paused thread always has a proposed ticket"

@@ -1,4 +1,5 @@
-"""route -> retrieve -> (abstain | answer -> validate) -> (propose_ticket -> human_gate -> act) -> finish"""
+"""screen -> route -> retrieve -> (abstain | answer -> validate) -> (propose_ticket -> human_gate
+-> act) -> finish, with screen or route going to refuse -> finish when the input rail trips."""
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
@@ -21,7 +22,9 @@ CHECKPOINT_SERDE = JsonPlusSerializer(
 
 def build_graph(checkpointer: BaseCheckpointSaver[str]) -> Graph:
     graph = StateGraph(AgentState, context_schema=AgentContext)
+    graph.add_node("screen", nodes.screen)
     graph.add_node("route", nodes.route)
+    graph.add_node("refuse", nodes.refuse)
     graph.add_node("retrieve", nodes.retrieve)
     graph.add_node("abstain", nodes.abstain)
     graph.add_node("answer", nodes.answer)
@@ -31,8 +34,10 @@ def build_graph(checkpointer: BaseCheckpointSaver[str]) -> Graph:
     graph.add_node("act", nodes.act)
     graph.add_node("finish", nodes.finish)
 
-    graph.add_edge(START, "route")
-    graph.add_edge("route", "retrieve")
+    graph.add_edge(START, "screen")
+    graph.add_conditional_edges("screen", nodes.after_screen)
+    graph.add_conditional_edges("route", nodes.after_route)
+    graph.add_edge("refuse", "finish")
     graph.add_conditional_edges("retrieve", nodes.after_retrieve)
     graph.add_edge("abstain", "finish")
     graph.add_edge("answer", "validate")
