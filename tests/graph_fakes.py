@@ -83,7 +83,7 @@ class FakeProxy:
     complexity: str = "simple"
     # Set to make the router flag the question, as the real model would for an attack.
     injection: bool = False
-    off_topic: bool = False
+    scope: str = "on_topic"
     # Raw router output to send instead of a well-formed RouteDecision.
     route_reply: str | None = None
     answers: list[str] = field(default_factory=list)
@@ -121,9 +121,9 @@ class FakeProxy:
                     "complexity": self.complexity,
                     "topic": "controller power",
                     "is_injection": self.injection,
-                    "is_off_topic": self.off_topic,
+                    "scope": self.scope,
                     "reason": "flagged by the fake router"
-                    if self.injection or self.off_topic
+                    if self.injection or self.scope == "off_topic"
                     else "",
                 }
             )

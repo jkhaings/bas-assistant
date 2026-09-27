@@ -4,8 +4,17 @@
 include:
   - deploy/langfuse/compose.yml
 
+# Every container's log is capped: Docker's default json-file log grows without limit, and on
+# Sep 27 one container's log filled the 58 GB Docker disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 50m
+    max-file: "2"
+
 services:
   app:
+    logging: *logging
     build: .
     image: bas-assistant-app:local
     env_file: ${HOME}/.bas-assistant.env
@@ -32,6 +41,7 @@ services:
     restart: unless-stopped
 
   migrate:
+    logging: *logging
     build: .
     image: bas-assistant-app:local
     env_file: ${HOME}/.bas-assistant.env
@@ -42,6 +52,7 @@ services:
     restart: "no"
 
   postgres:
+    logging: *logging
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: bas_assistant
@@ -60,6 +71,7 @@ services:
     restart: unless-stopped
 
   redis:
+    logging: *logging
     image: redis:7-alpine
     # Published on localhost for make test-int and make eval.
     ports:
@@ -72,6 +84,7 @@ services:
     restart: unless-stopped
 
   litellm:
+    logging: *logging
     # main-stable, pinned by digest (LiteLLM 1.102.1).
     image: ghcr.io/berriai/litellm-database:main-stable@sha256:c38fe5eff11874941a21f5630ceb842f640dee7d5d5cde440b60ed0a71798f33
     # The env file holds the Postgres password as POSTGRES_PASSWORD and compose cannot
@@ -100,6 +113,7 @@ services:
     restart: unless-stopped
 
   prometheus:
+    logging: *logging
     image: prom/prometheus:v3.15.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -117,6 +131,7 @@ services:
     restart: unless-stopped
 
   grafana:
+    logging: *logging
     image: grafana/grafana:13.2.2
     # Only its two passwords (`make observability-secrets`): Grafana is publicly reachable, so
     # it gets no vendor key. grafana.ini reads the admin one, the data source the other.

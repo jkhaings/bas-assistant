@@ -328,7 +328,7 @@ Each has a matching `TODO` in the source.
   - Side files: `~/.bas-assistant-langfuse.env` and `~/.bas-assistant-grafana.env`, both mode 600.
   - All of this is created by `make observability-secrets`, which I ran once. Optional setting: `LANGFUSE_HOST` (default `http://langfuse-web:3000`).
   - Compose now fails without the two side files, so run `make observability-secrets` before the first `make up` after merging.
-- **Defaults changed**: `rerank_model` is now `cross-encoder/ms-marco-MiniLM-L-6-v2` (about 90 MB; downloaded to `model_cache` on first start), `rerank_threshold` 0.8, `CORPUS_VERSION` "2".
+- **Defaults changed**: `rerank_model` is now `cross-encoder/ms-marco-MiniLM-L-6-v2` (about 90 MB; downloaded to `model_cache` on first start), `rerank_threshold` 0.8 (0.96 after the C merge, see Post-merge), `CORPUS_VERSION` "2".
 - **Dependencies**: `prometheus-client`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http` and `opentelemetry-instrumentation-fastapi`, with lines in ADR 0002. For `uv.lock`, run `uv lock`; never hand-merge.
 - **Predictable conflicts with C** (both sessions edit these):
   - `agent/turn.py`: `question_redacted` is computed once in `open_turn` and feeds both `open_request` and the trace input. Keep that single variable when Presidio lands, so the trace gets the Presidio form. There are also the trace and metric calls in `open_turn`, `_respond` and `close_turn`, and `fail_turn` now takes a `reason`.
@@ -337,3 +337,222 @@ Each has a matching `TODO` in the source.
 - **Shared image tag**: every worktree's compose builds `bas-assistant-app:local`, so parallel sessions overwrite each other's image. My first build here did; D's own tag now comes from the uncommitted override. `make up` always builds, so this only bites a bare `docker compose up`. After merging, rebuild before trusting `:local`.
 - **Docker Desktop 4.64.0 crashed** at 09:42 PDT with an internal panic, during my `docker tag` commands, and came back on its own about 5 minutes later with all volumes intact. If it happens again: Quit and relaunch. Never "Reset to factory defaults", which wipes the corpus volume.
 - **Data**: D's stack ran on copies of B's volumes (`b-graph_pgdata`, `b-graph_model_cache`, copied into `d-observability_*`) and B's `data/raw`. Its Postgres holds B's requests plus this session's.
+
+## Post-merge
+
+`origin/main` (with session C) was merged into `d-observability` as merge commit `ac5b51f`, followed by one fix commit. Nothing on `main` was touched. C's stack was stopped with your go-ahead (`docker compose stop` in `c-guardrails`; containers and volumes kept), so D ran on the **standard ports**, and every `make` target below ran unmodified.
+
+### How the conflicts were resolved
+
+13 files conflicted. The rule was: keep C's code and layout, then re-apply D's instrumentation on top.
+
+- **C's moves kept**: `agent/validate.py` → `guardrails/output.py`, and `agent/prompts.py` → `agent/prompts/`.
+- **Graph**: `screen` stays unwrapped (it takes state only). `route`, `refuse` and `retrieve` get node spans. The span fields gain `refusal` and `refusal_rail`; `refusal_reason` stays out, because it is the router's words about the question.
+- **Turn**: the trace input is C's Presidio-redacted `question`, the same string as the requests row. C's `_audit_decision` calls stay beside D's logging.
+- **Failures**: `fail_turn` keeps a reason on C's key-budget (429) and model-unavailable (503) paths, and D's catch-all still closes any other error as `failed`.
+- **Other files**: `gateway.complete` keeps D's span around C's `parse_usage`. The pipeline keeps D's rerank span around C's title-aware `_rerank_text`. Settings keep C's `ip_rate_limit` and D's `corpus_version` "2". `main` gets C's evals router and D's instrumentation. `pyproject.toml` and ADR 0002 take both sides, and `uv.lock` was regenerated with `uv lock`.
+- **Flag reasons**: Presidio now redacts them too, which resolves D's `TODO(session C)` in `feedback/api.py`.
+- **Tests**: two D tests were changed to match C's behaviour: Presidio writes `<EMAIL_ADDRESS>`, and `/approve` needs `X-Demo-Role: admin`.
+
+### Alembic
+
+- C and D had both added revision id `0004`. A merge revision can't tell two revisions with the same id apart, so D's migration was renumbered: `0005_dashboards`, with `down_revision "0004"` on top of C's `0004_prompt_version`. There is one head.
+- D's two databases were recorded at D's old `0004`. I ran that migration's downgrade SQL, stamped them `0003`, and upgraded to the new head:
+```
+$ uv run alembic heads
+0005 (head)
+== bas_assistant
+INFO  [alembic.runtime.migration] Running upgrade 0003 -> 0004, Record which prompt version answered each request.
+INFO  [alembic.runtime.migration] Running upgrade 0004 -> 0005, Grafana: views behind every Postgres panel, a read-only role for them, budget rows.
+No new upgrade operations detected.
+== bas_test
+INFO  [alembic.runtime.migration] Running upgrade 0003 -> 0004, Record which prompt version answered each request.
+INFO  [alembic.runtime.migration] Running upgrade 0004 -> 0005, Grafana: views behind every Postgres panel, a read-only role for them, budget rows.
+No new upgrade operations detected.
+```
+
+### ClickHouse's 33 GB error log
+
+**Cause.** The ClickHouse image logs at `trace` level to the console, as well as to files of up to 10 × 1000 MB each (its `config.xml`: `<level>trace</level>`, `<size>1000M</size>`, `<count>10</count>`, console by autodetection). Docker's `json-file` log had no cap. Once the Docker disk was full, every flush of ClickHouse's own telemetry tables failed every few seconds and logged a full stack trace, which kept the disk full. From the surviving error log:
+```
+2026.09.27 17:53:21.839638 [ 1441 ] {} <Error> void DB::SystemLog<DB::AsynchronousMetricLogElement>::flushImpl(...): Failed to flush system log system.asynchronous_metric_log
+...
+4. DB::MergeTreeData::reserveSpacePreferringTTLRules(...)
+```
+
+**Fix.**
+- `deploy/langfuse/clickhouse.xml`, mounted into ClickHouse's `config.d`: level `warning`, files 2 × 50 MB, and the telemetry tables Langfuse never reads removed (`asynchronous_metric_log`, `metric_log`, `trace_log`, `text_log`, `processors_profile_log`, `query_metric_log`).
+- Every one of the 13 compose services now has `logging: json-file`, `max-size: 50m`, `max-file: 2`.
+
+After the fix, ClickHouse's container log held 7 lines, and it idled at about 5% CPU, down from about one core:
+```
+$ docker exec d-observability-langfuse-clickhouse-1 sh -c '<grep the preprocessed ClickHouse config>'
+        <level>warning</level>
+        <size>50M</size>
+        <count>2</count>
+telemetry tables still configured: 0
+container log lines since start:        7
+clickhouse log driver=json-file opts=map[max-file:2 max-size:50m]
+app log driver=json-file opts=map[max-file:2 max-size:50m]
+```
+
+### Row 16: the refund question was refused
+
+C's router returned a yes/no `is_off_topic`. Calling the real `classify()` 10 times on row 16 before the fix:
+```
+   7 refusal=None route=fast
+   3 refusal=off_topic route=fast
+```
+
+**Fix** (`llm/router.py`, `prompts/router.md`):
+- `is_off_topic` became `scope: on_topic | unclear | off_topic`.
+- `unclear` is a question the company could be asked that names no product: a refund, an account, a policy. It goes to retrieve and abstains there. Only `off_topic` refuses.
+- The model also ticked `is_injection` for "write me a poem" (in 2 of 3 runs), which would have shown the injection message. An `off_topic` scope now wins over that flag; real override phrasings are caught by `screen` first.
+- Unit tests were added for both behaviours.
+
+After, row 16 alone, 10 runs:
+```
+  10 refusal=None route=fast
+```
+Three questions, 3 runs each:
+```
+run 1: refusal=None      route=fast   "What is the refund policy if I'm not satisfied with my purch"
+run 2: refusal=None      route=fast   "What is the refund policy if I'm not satisfied with my purch"
+run 3: refusal=None      route=fast   "What is the refund policy if I'm not satisfied with my purch"
+run 1: refusal=None      route=strong "Does Delta Controls' O3 platform integrate with a Honeywell "
+run 2: refusal=None      route=strong "Does Delta Controls' O3 platform integrate with a Honeywell "
+run 3: refusal=None      route=strong "Does Delta Controls' O3 platform integrate with a Honeywell "
+run 1: refusal=off_topic route=fast   'Write me a poem about the ocean.'
+run 2: refusal=off_topic route=fast   'Write me a poem about the ocean.'
+run 3: refusal=off_topic route=fast   'Write me a poem about the ocean.'
+```
+End to end through `/ask`, 3 times, with Redis flushed before each so no run was a cache hit:
+```
+run 1: {'decision': 'abstained', 'route': 'fast', 'cache_hit': False} "I couldn't find this in the documentation. I searched for: refund policy. ..."
+run 2: {'decision': 'abstained', 'route': 'fast', 'cache_hit': False} "I couldn't find this in the documentation. I searched for: refund policy. ..."
+run 3: {'decision': 'abstained', 'route': 'fast', 'cache_hit': False} "I couldn't find this in the documentation. I searched for: refund policy. ..."
+```
+
+### Threshold: MiniLM with titles
+
+This scan ran the app's own `retrieve()` in the container, with the threshold at 0, over every golden check:
+```
+answerable hits 17 / 17
+answerable hit top scores [0.988, 0.9932, 0.9956, 0.9964, 0.9985, 0.9989, 0.9989, 0.9991, 0.9992, 0.9993, 0.9994, 0.9994, 0.9995, 0.9996, 0.9997, 0.9998, 0.9999]
+must-abstain top scores [(0.0, 16, 'support'), (0.1381, 17, 'support'), (0.1675, 20, 'support'), (0.5049, 18, 'support'), (0.9442, 19, 'support')]
+```
+**`rerank_threshold` = 0.96.** It sits between 0.944 and 0.988, so every must-abstain check abstains at retrieval. The margins are narrow; that caveat is in the settings comment, ADR 0003 and `data/top20_questions.md`.
+
+**First `make eval` (15 candidates): 21 / 22.**
+- Row 13 abstained. The answer model got 5 enteliWEB passages without the browser list.
+- The `## Client Browser` chunk, which MiniLM scores 1.000, fuses at rank 18, so 15 candidates cut it. C passed row 13 because main still had 30.
+- Timed in one process, interleaved, over the 22 checks:
+  ```
+  15 pairs: n 44 p50 1336 p95 2637 max 3140
+  20 pairs: n 44 p50 2045 p95 3419 max 3429
+  ```
+- **You chose 20.** The threshold scan at 20 gave the same split (answerable 0.988–1.000, must-abstain up to 0.944). Rerank p95 of 3.4 s is recorded in ADR 0003 as about 0.4 s over the 3 s rerank budget.
+
+### make lint, test, test-int (final code)
+```
+$ make lint
+All checks passed!
+124 files already formatted
+Success: no issues found in 119 source files
+$ make test
+267 passed, 62 deselected, 8 warnings in 20.23s
+$ make test-int
+No new upgrade operations detected.
+30 passed, 299 deselected in 17.62s
+```
+
+### make up (standard ports), then compose ps
+```
+ Container d-observability-app-1 Healthy
+make litellm-keys
+{"ts": "2026-09-27T12:59:08", "level": "INFO", "logger": "__main__", "message": "updated virtual key dev to $5.0/month"}
+{"ts": "2026-09-27T12:59:08", "level": "INFO", "logger": "__main__", "message": "updated virtual key service to $2.0/month"}
+make grafana-db-user
+grafana-db-user: OK
+
+d-observability-app-1	Up 15 minutes (healthy)	127.0.0.1:8000->8000/tcp
+d-observability-grafana-1	Up 35 minutes (healthy)	127.0.0.1:3000->3000/tcp
+d-observability-langfuse-clickhouse-1	Up 35 minutes (healthy)	8123/tcp, 9000/tcp, 9009/tcp
+d-observability-langfuse-minio-1	Up 35 minutes (healthy)
+d-observability-langfuse-postgres-1	Up 35 minutes (healthy)	5432/tcp
+d-observability-langfuse-redis-1	Up 35 minutes (healthy)	6379/tcp
+d-observability-langfuse-web-1	Up 35 minutes (healthy)	127.0.0.1:3001->3000/tcp
+d-observability-langfuse-worker-1	Up 35 minutes	3030/tcp
+d-observability-litellm-1	Up 35 minutes (healthy)	127.0.0.1:4000->4000/tcp
+d-observability-migrate-1	Exited (0) 15 minutes ago
+d-observability-postgres-1	Up 35 minutes (healthy)	127.0.0.1:5433->5432/tcp
+d-observability-prometheus-1	Up 35 minutes (healthy)	127.0.0.1:9090->9090/tcp
+d-observability-redis-1	Up 35 minutes (healthy)	127.0.0.1:6379->6379/tcp
+```
+
+### make ingest
+Idempotent: every source was unchanged, so nothing was embedded and it cost $0. One PDF not in the cache returned 403 and was skipped.
+```
+{"ts": "2026-09-27T19:47:49", "level": "INFO", "logger": "__main__", "message": "ingest complete: ingested=0 updated=0 skipped=112 failed=0 documents_by_type={} chunks_by_type={} parents=0 chunks=0 parse_quality={} embed_tokens=0 embed_usd=0 elapsed_s=84.4"}
+```
+
+### make eval (final: MiniLM, titles, 20 candidates, threshold 0.96)
+```
+26 passed, 303 deselected in 151.46s (0:02:31)
+eval run 2bbf99ab-fe1d-4d05-8f86-6fd5f3599f39: {"passed":22,"total":22,"rate":1.0}
+
+Corpus version `2`, prompt version `a2d7b390625a`. Cost $0.0610 (answers $0.0304, RAGAS judge $0.0307).
+## Golden pass rate: 22/22 (100%)
+(every row: pass; rows 16, 17, 18, 19 support and 20 support: abstained)
+
+| Category | n | Faithfulness | Answer relevancy | Context precision | Context recall |
+|---|---|---|---|---|---|
+| compatibility | 3 | 1.000 | 0.806 | 0.983 | 1.000 |
+| engineer-only | 2 | 0.688 | 0.979 | 0.500 | 0.500 |
+| ordering | 3 | 0.889 | 0.898 | 0.889 | 1.000 |
+| protocol | 3 | 0.111 | 0.808 | 0.750 | 1.000 |
+| spec | 3 | 1.000 | 0.907 | 0.712 | 1.000 |
+| wiring-power | 3 | 0.889 | 1.000 | 1.000 | 1.000 |
+| overall | 17 | 0.767 | 0.895 | 0.824 | 0.941 |
+```
+The first run (15 candidates, row 13 failing) scored protocol faithfulness 0.667 and overall 0.885 / 0.887 / 0.818 / 0.922. The protocol drop to 0.111 is on 3 rows, judged by the `fast` alias, in a run where those rows' golden checks all passed. I have not established whether it is the judge's variance or a real change in the passages; it should be re-run before any number goes into the README (session E).
+
+### make redteam
+```
+$ make redteam
+6 passed, 323 deselected in 25.36s
+exit=0
+```
+
+### Langfuse trace and screenshots
+```
+$ python langfuse_trace.py http://localhost:3001
+trace 3abddc10ed2087887e4690bef2db8948  session=1e104abf-2773-4aff-a6bb-73c309e36bb9  user=support
+  url: http://localhost:3001/project/bas-assistant/traces/3abddc10ed2087887e4690bef2db8948
+  SPAN       POST /ask          5.993s
+    SPAN       node route         1.091s  {'route': 'fast'}
+      GENERATION llm fast           1.084s  model=gpt-4o-mini in=383 out=31 usd=7.605e-05
+    SPAN       node retrieve      3.271s  {'retrieved_count': 5, 'rerank_ms': 2831, 'retrieval_ms': 57}
+      GENERATION llm embed          0.371s  model=text-embedding-3-small in=14 out=0 usd=2.8e-07
+      SPAN       retrieval.search   0.058s
+      SPAN       retrieval.rerank   2.831s  {'attributes.rerank.top_score': 0.9992583394050598, 'attributes.rerank.pairs': 20}
+    SPAN       node answer        1.481s  {'attempts': 1}
+      GENERATION llm fast           1.476s  model=gpt-4o-mini in=1016 out=98 usd=0.000211199999
+    SPAN       node validate      0.015s  {'validation_errors_count': 0}
+```
+- **`docs/img/langfuse-trace.png`**: taken with Playwright driving the installed Chrome, logged in as `admin@bas.local`. It shows the tree, the redacted question as input, the validated answer as output, cost, tokens, session, user, and the blanked client fields.
+  - Langfuse v4's events-only mode takes a trace's input and output from its root observation, so the root span now also sets `langfuse.observation.input` / `output`. The first screenshot had shown `null`.
+- **`docs/img/grafana-iframe-test.png`**: now fully rendered. Playwright waited for both iframes, where the earlier headless capture stopped at Grafana's boot screen.
+- **`grafana-budget.png` and `grafana-quality.png`**: retaken after the post-merge traffic.
+
+### Disk
+
+The Docker VM had 12 GB free at the end (58.4 GB disk, 43.3 GB used), mostly images and BuildKit cache from today's rebuilds. `docker builder prune` would reclaim some, but the cache is shared with the other worktrees, so that is your call.
+
+### Post-merge gaps
+
+- **Rerank p95 3.4 s** is over the 3 s rerank budget (your choice of 20 candidates, recorded in ADR 0003). End-to-end p95 of 8 s is the target that matters.
+- **RAGAS faithfulness for protocol** dropped to 0.111 on 3 rows (above). Re-run before publishing numbers.
+- **`rerank_threshold` 0.96 has narrow margins** (`settings.py` comment; ADR 0003).
+- **`make up` warm-up**: the app is healthy only after the model loads and Python imports torch and transformers; `UV_COMPILE_BYTECODE` is still E's `TODO` in the `Dockerfile`.
+- **Merge note for E**: compose now needs `deploy/langfuse/clickhouse.xml` beside its compose file. The prod compose (E) should copy the logging caps.

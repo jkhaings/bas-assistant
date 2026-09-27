@@ -21,7 +21,7 @@ This file becomes `docs/ARCHITECTURE.md` in the repo. Keep it current-state trut
 | A — retrieval | `a-retrieval` | Shipped: ingest (crawl/parse/chunk/embed), hybrid retrieval, `GET /documents`; its retrieval-only `/ask` is now `POST /search` |
 | B — graph | `b-graph` | Merged to main: LiteLLM proxy (fast / strong / embed, embeddings included), router, Redis cache, `usage` + receipt, daily cap + allowance, LangGraph with human gate on a Postgres checkpointer, retrieve node on A's hybrid search, `/ask`, `/ask/stream`, `/approve`, `/threads/{id}/history`, `/tickets`, `/requests/{id}/receipt` |
 | C — guardrails | `c-guardrails` | Merged to main: Presidio input redaction before storage and models, injection/off-topic rail (patterns + router flags → `refuse`), output PII check, per-IP limiter, one limit error shape, audit row on every decision, `/approve` tool allowlist, key-budget 429, prompt versioning, golden set (`make eval`) + RAGAS + `eval_runs` + `GET /evals/latest`, red team (`make redteam`), `docs/security.md`. Also retrieval (document title in lexical rank and rerank, threshold 0.7) and crawler retries |
-| D — observability | `d-observability` | Built on branch, not merged: reranker loaded at startup, 15 candidates, MiniLM cross-encoder (ADR 0003); OpenTelemetry traces to self-hosted Langfuse; Prometheus `/metrics`; Grafana Budget and Quality & adoption dashboards on `dash_*` views with alert rules; `POST /requests/{id}/feedback` and `/flag`; JSON logs with request_id and trace_id |
+| D — observability | `d-observability` | Built on branch, not merged: reranker loaded at startup, 20 candidates, MiniLM cross-encoder (ADR 0003); OpenTelemetry traces to self-hosted Langfuse; Prometheus `/metrics`; Grafana Budget and Quality & adoption dashboards on `dash_*` views with alert rules; `POST /requests/{id}/feedback` and `/flag`; JSON logs with request_id and trace_id |
 | E — ship | `e-ship` | Not started |
 
 
@@ -116,14 +116,14 @@ Web (curl, for now)
       │
       ▼
  retrieve(): embed the question → pgvector top-20 ∪ tsvector top-20 (both acl_groups &&-filtered)
-             → reciprocal rank fusion → top-15 → local cross-encoder rerank
+             → reciprocal rank fusion → top-20 → local cross-encoder rerank
              → group by parent, best child per parent → top-5
              → best score < rerank_threshold ? abstain : citations
       │
       ▼
  Persist: one `threads` row (one per request — session B adds multi-turn reuse),
           one `requests` row (decision = retrieved|abstained), `request_chunks` for
-          the top-15 reranked, one `usage` row for the query embed call
+          the top-20 reranked, one `usage` row for the query embed call
       │
       ▼
  Response: {request_id, answer: null, citations[], retrieved[], abstained, timings}
@@ -132,10 +132,13 @@ Web (curl, for now)
 The reranker is the only non-trivial cost in retrieval, and it runs on CPU. Measured in session D
 (ADR 0003):
 - bge-reranker-base over 30 candidates took 13–20 s per question in the container.
-- Since session D, `cross-encoder/ms-marco-MiniLM-L-6-v2` over 15 candidates, loaded at app startup
-  (`retrieval.rerank.load_reranker` in the lifespan), takes rerank p50 979 ms and p95 2,177 ms over
-  the 40 golden `/search` calls. `rerank_threshold` is 0.8, and `CORPUS_VERSION` moved to "2" so no
-  answer cached under the old reranker is served.
+- Since session D, `cross-encoder/ms-marco-MiniLM-L-6-v2`, loaded at app startup
+  (`retrieval.rerank.load_reranker` in the lifespan), with `CORPUS_VERSION` "2" so no answer cached under the old
+  reranker is served.
+- After the C merge it reads each chunk with its document title, over 20 fused candidates (15 cut golden row 13's
+  answer at fused rank 18). Rerank p50 2.0 s and p95 3.4 s over the golden checks on this machine, about 0.4 s over
+  the 3 s rerank budget, a trade Jason chose for 22/22 golden. `rerank_threshold` is 0.96, set from the golden set
+  so every must-abstain check abstains at retrieval (ADR 0003, post-merge sections).
 
 **Retrieval as of session C**:
 - The lexical candidates match and rank on `setweight(to_tsvector(documents.title), 'A') ||
@@ -143,8 +146,8 @@ The reranker is the only non-trivial cost in retrieval, and it runs on CPU. Meas
 - The cross-encoder scores `"{document title}\n{chunk text}"`. A short spec section
   ("## Power / 24 VDC (20 W max)") rarely names its product, and sibling catalog sheets repeat
   sections word for word, so without the title the reranker cannot tell them apart.
-- `rerank_threshold` is re-tuned from 0.5 to 0.7. Every answerable golden row now tops out at 0.93
-  or above, and every must-abstain row at 0.53 or below (`data/top20_questions.md`).
+- C re-tuned `rerank_threshold` from 0.5 to 0.7 for bge-reranker-base (answerable rows 0.93 and above, must-abstain
+  rows 0.53 and below). After the merge with D's MiniLM it is 0.96 (above).
 - `/search` also passes the per-IP limiter. It redacts the question before the query embedding
   and stores only the redacted text.
 
@@ -197,7 +200,7 @@ decision, errors[], usage_so_far
 **Nodes and edges**:
 
 1. `route` — fast model, structured output `{complexity: simple|complex, topic}`. Edge: always → `retrieve`. Logged to `usage` stage `router`.
-2. `retrieve` — hybrid search in one SQL: vector top-20 ∪ tsvector top-20 → reciprocal rank fusion → rerank top-15 locally (top-30 until session D) → top-5 parents, filtered by `acl_groups && user.acl_groups`. Edge: best score < threshold → `abstain`; else → `answer`.
+2. `retrieve` — hybrid search in one SQL: vector top-20 ∪ tsvector top-20 → reciprocal rank fusion → rerank top-20 locally (top-30 until session D) → top-5 parents, filtered by `acl_groups && user.acl_groups`. Edge: best score < threshold → `abstain`; else → `answer`.
 3. `abstain` — deterministic, no model call. "I couldn't find this in the documentation. I searched: … Try: …" Decision = abstained. → `finish`.
 4. `answer` — model per `route`, system prompt with invariants only, passages wrapped as data. Structured output: `{answer, citations: [chunk_id], confidence, needs_ticket, ticket_draft?}`. Prompt caching on the system prompt. → `validate`.
 5. `validate` — code, no model. Citations must be a subset of retrieved ids; no URLs outside `documents.source_url`; no images; schema valid. Fail → one retry of `answer` with the mismatch list appended; second fail → decision = failed, safe message. Pass → `needs_ticket` ? `propose_ticket` : `finish`.
@@ -230,9 +233,13 @@ decision, errors[], usage_so_far
   nodes; the model still makes two decisions.
 - **screen**: code only, $0. A narrow regex list of instruction-override phrasings
   (`guardrails/input.injection_pattern`). "ignore the wiring instructions" is not one of them.
-- **route**: the router call also returns `is_injection`, `is_off_topic` and `reason`, with
-  `max_tokens` 120. Off-topic means nothing to do with building automation or the company;
-  refund, policy and support questions are on topic, and abstain when the docs do not cover them.
+- **route**: the router call also returns `is_injection`, `scope` (`on_topic | unclear | off_topic`) and `reason`, with
+  `max_tokens` 120. Only `off_topic` refuses: nothing to do with building automation or the company. `unclear` is a
+  question the company could be asked that the documents may not cover (a refund, an account, a policy); it goes to
+  `retrieve` and abstains there. Since the post-merge D session: a yes/no `is_off_topic` refused the golden refund
+  question in 3 of 10 live runs, `unclear` made it 0 of 10. An `off_topic` scope also wins over an `is_injection`
+  flag on the same request, because the model ticks both for a plain "write me a poem"; real override phrasings are
+  caught by `screen` first.
 - **refuse**: decision `refused` with a fixed plain message per kind, and an `input_refused`
   audit row (rail `pattern|model`, kind, reason). The model's reason is never shown, and a
   refusal is not cached. State gains `refusal`, `refusal_rail` and `refusal_reason`.
@@ -463,6 +470,10 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
   - Langfuse through `include: deploy/langfuse/compose.yml` (web on 127.0.0.1:3001, plus worker, ClickHouse, MinIO, Postgres 17 and Redis of its own, none published). Its containers read only `~/.bas-assistant-langfuse.env`, because its variable names collide with ours and it has no use for the vendor keys.
   - `make observability-secrets` writes that file once, and appends `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `GRAFANA_DB_PASSWORD` to the main env file.
   - `make up` ends with `make grafana-db-user`.
+
+  Every service's Docker log is capped (`json-file`, 2 x 50 MB), and ClickHouse logs warnings only, into 2 x 50 MB
+  files, without its telemetry tables (`deploy/langfuse/clickhouse.xml`). On Sep 27 its default trace-level console
+  log reached 33 GB and filled the 58 GB Docker disk.
 
   Ollama and n8n are not in compose.
 - **Public demo**: the same Compose file (production profile: no Ollama if the droplet is small, Langfuse optional) on a DigitalOcean droplet. Caddy reverse proxy with auto-TLS: `/` → web app + API, `/grafana` → Grafana with anonymous Viewer access limited to the two dashboards. Cloudflare DNS A record on the jasonkhaings.com subdomain. Secrets in the droplet's env file only. `deploy/deploy.sh` pulls the tagged image and restarts.

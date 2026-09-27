@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 Route = Literal["fast", "strong"]
 RefusalKind = Literal["injection", "off_topic"]
+# "unclear" is a question the company could be asked that the documents may not cover
+# (a refund, an account): it goes to retrieval and abstains there, never to a refusal.
+Scope = Literal["on_topic", "unclear", "off_topic"]
 
 # Room for the flags and a one-sentence reason next to the route and topic.
 ROUTER_MAX_TOKENS = 120
@@ -30,7 +33,7 @@ class RouteDecision(BaseModel):
     complexity: Literal["simple", "complex"]
     topic: str
     is_injection: bool
-    is_off_topic: bool
+    scope: Scope
     reason: str
 
 
@@ -45,9 +48,12 @@ class Classification:
 
 
 def _refusal(decision: RouteDecision) -> RefusalKind | None:
-    if decision.is_injection:
-        return "injection"
-    return "off_topic" if decision.is_off_topic else None
+    # The model also ticks is_injection for plain unrelated requests ("write me a poem" reads
+    # as another task), and the injection message would be the wrong one to show. Real
+    # override phrasings are caught by the pattern rail before this call.
+    if decision.scope == "off_topic":
+        return "off_topic"
+    return "injection" if decision.is_injection else None
 
 
 def classify(client: httpx.Client, question: str) -> Classification:

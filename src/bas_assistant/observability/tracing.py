@@ -85,13 +85,17 @@ def tag_trace(request_id: UUID, thread_id: UUID, role: str) -> None:
 
 
 def set_trace_input(question_redacted: str) -> None:
-    trace.get_current_span().set_attribute("langfuse.trace.input", question_redacted)
+    # Langfuse v4 (events only) shows a trace's input from its root observation.
+    trace.get_current_span().set_attributes(
+        {"langfuse.trace.input": question_redacted, "langfuse.observation.input": question_redacted}
+    )
 
 
 def set_trace_outcome(decision: str, route: str | None, answer: str, cache_hit: bool) -> None:
     trace.get_current_span().set_attributes(
         {
             "langfuse.trace.output": answer,
+            "langfuse.observation.output": answer,
             "langfuse.trace.metadata.decision": decision,
             "langfuse.trace.metadata.route": route or "none",
             "langfuse.trace.metadata.cache_hit": cache_hit,

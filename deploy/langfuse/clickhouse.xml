@@ -1,0 +1,20 @@
+<!--
+  Mounted into ClickHouse's config.d. The image logs at `trace` level, to the console as well
+  as to files of up to 10 x 1000 MB. On Sep 27, once the Docker disk was full, every flush of
+  ClickHouse's own telemetry tables failed every few seconds and logged a full stack trace
+  to the console: 33 GB of container log, which kept the disk full. Warnings only from here,
+  small files, and the telemetry tables Langfuse never reads are not created.
+-->
+<clickhouse>
+    <logger>
+        <level>warning</level>
+        <size>50M</size>
+        <count>2</count>
+    </logger>
+    <asynchronous_metric_log remove="1"/>
+    <metric_log remove="1"/>
+    <trace_log remove="1"/>
+    <text_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <query_metric_log remove="1"/>
+</clickhouse>

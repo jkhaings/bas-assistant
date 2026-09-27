@@ -10,6 +10,14 @@
 # Secrets come from ~/.bas-assistant-langfuse.env (`make observability-secrets`); the
 # project keys in it are the app's LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY.
 
+# Every container's log is capped: Docker's default json-file log grows without limit, and on
+# Sep 27 one container's log filled the 58 GB Docker disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 50m
+    max-file: "2"
+
 x-langfuse-env: &langfuse-env
   NEXTAUTH_URL: http://localhost:3001
   TELEMETRY_ENABLED: "false"
@@ -44,6 +52,7 @@ x-langfuse-depends: &langfuse-depends
 
 services:
   langfuse-web:
+    logging: *logging
     image: docker.langfuse.com/langfuse/langfuse:4
     env_file: ${HOME}/.bas-assistant-langfuse.env
     environment:
@@ -67,6 +76,7 @@ services:
     restart: unless-stopped
 
   langfuse-worker:
+    logging: *logging
     image: docker.langfuse.com/langfuse/langfuse-worker:4
     env_file: ${HOME}/.bas-assistant-langfuse.env
     environment: *langfuse-env
@@ -74,6 +84,7 @@ services:
     restart: unless-stopped
 
   langfuse-postgres:
+    logging: *logging
     image: postgres:17
     env_file: ${HOME}/.bas-assistant-langfuse.env
     environment:
@@ -89,6 +100,7 @@ services:
     restart: unless-stopped
 
   langfuse-clickhouse:
+    logging: *logging
     image: clickhouse/clickhouse-server:25.12
     user: "101:101"
     env_file: ${HOME}/.bas-assistant-langfuse.env
@@ -98,6 +110,7 @@ services:
     volumes:
       - langfuse_clickhouse:/var/lib/clickhouse
       - langfuse_clickhouse_logs:/var/log/clickhouse-server
+      - ./clickhouse.xml:/etc/clickhouse-server/config.d/zz-bas-assistant.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
       interval: 5s
@@ -107,6 +120,7 @@ services:
     restart: unless-stopped
 
   langfuse-minio:
+    logging: *logging
     image: cgr.dev/chainguard/minio
     env_file: ${HOME}/.bas-assistant-langfuse.env
     environment:
@@ -125,6 +139,7 @@ services:
     restart: unless-stopped
 
   langfuse-redis:
+    logging: *logging
     image: redis:7-alpine
     env_file: ${HOME}/.bas-assistant-langfuse.env
     command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_AUTH\" --maxmemory-policy noeviction"]

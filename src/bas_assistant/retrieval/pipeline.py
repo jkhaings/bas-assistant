@@ -16,7 +16,9 @@ from bas_assistant.retrieval.fusion import rrf
 from bas_assistant.retrieval.rerank import Reranker
 from bas_assistant.retrieval.store import VectorStore
 
-FUSED_TOP_N = 15
+# 20, not 15: golden row 13's answer (enteliWEB's browser list) fuses at rank 18; the reranker
+# scores it best of all. MiniLM keeps 20 pairs under the 3 s budget (docs/adr/0003-reranker.md).
+FUSED_TOP_N = 20
 FINAL_TOP_N = 5
 
 

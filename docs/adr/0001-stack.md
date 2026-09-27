@@ -12,7 +12,7 @@ One line per decision, with the reason.
 | Vector store | pgvector + tsvector | Chroma, Qdrant | Single Postgres service, hybrid search in one SQL, no second DB |
 | ORM / migrations | SQLAlchemy 2 + Alembic | — | Type-safe, async, industry standard |
 | Embeddings | OpenAI text-embedding-3-small via LiteLLM | — | Best quality/cost in class; swappable via alias |
-| Reranker | ms-marco-MiniLM-L-6-v2 (local, sentence-transformers), 15 candidates | bge-reranker-base, Cohere Rerank | Free, no network call; bge-reranker-base took 13-20 s per question on the container's CPU, MiniLM p95 2.2 s (ADR 0003, session D) |
+| Reranker | ms-marco-MiniLM-L-6-v2 (local, sentence-transformers), 20 candidates | bge-reranker-base, Cohere Rerank | Free, no network call; bge-reranker-base took 13-20 s per question on the container's CPU, MiniLM p95 2.2 s (ADR 0003, session D) |
 | PDF parse fallback | pypdfium2 | PyMuPDF | Already a Docling dependency (Apache-2.0); PyMuPDF is AGPL-3.0 and would be a new dependency in a public repo |
 | LLM gateway | LiteLLM | — | Single alias layer, cost logging, virtual keys, fallbacks |
 | Fast alias | gpt-4o-mini → gemini-3.8-flash fallback (reasoning_effort low) | gemini-2.0-flash | Cheapest capable model; gemini-2.0-flash and 2.5-flash return 404 (retired), verified Sep 26 in session B |

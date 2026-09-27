@@ -71,8 +71,11 @@ class Settings(BaseSettings):
     # the container's CPU against a 3 s budget (docs/adr/0003-reranker.md). It reads each
     # chunk with its document title (session C).
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    # THRESHOLD_PENDING
-    rerank_threshold: float = 0.8
+    # Set on the golden set with MiniLM and titles (data/top20_questions.md, Sep 27 post-merge):
+    # answerable rows' top score 0.988-1.000, must-abstain rows 0.00-0.944 (row 19 as support).
+    # 0.96 makes every must-abstain row abstain before any answer call; the margins are narrow
+    # (0.016 and 0.028), so re-check it whenever the corpus or the reranker changes.
+    rerank_threshold: float = 0.96
 
     @property
     def database_url(self) -> str:

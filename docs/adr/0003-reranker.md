@@ -1,4 +1,4 @@
-# ADR 0003: Reranker — MiniLM cross-encoder over 15 candidates, loaded at startup
+# ADR 0003: Reranker — MiniLM cross-encoder over 20 candidates, loaded at startup
 
 Status: accepted (Sep 27, session D)
 
@@ -62,3 +62,26 @@ Scores go through an explicit sigmoid (`activation_fn`), so the threshold stays 
 - The threshold was tuned on 20 rows. Session C's golden eval and RAGAS run should confirm it or move it.
 - The model is about 90 MB in the `model_cache` volume. A fresh volume downloads it at first start, so the app's healthcheck `start_period` is 120 s.
 - If quality needs bge back: a GPU host, or sentence-transformers' ONNX backend (a new dependency). Lowering `max_length` below 512 is the other lever not tried.
+
+## Post-merge with session C (Sep 27): titles in the reranker input, threshold 0.96
+
+Session C, still on bge-reranker-base, made the reranker read each chunk with its document title and moved the threshold to 0.7. The merged code keeps MiniLM, now with titles. The threshold was set again from the golden set through the app's own `retrieve()` (15 candidates, threshold 0, inside the container):
+
+- **Hits**: the expected document is in the top 5 for all 17 answerable checks (without titles: 16 of 17).
+- **Answerable checks**: top scores 0.988–1.000.
+- **Must-abstain checks**: row 16 at 0.000, row 17 at 0.138, row 20 as support at 0.168, row 18 at 0.505, and row 19 as support at 0.944.
+
+`rerank_threshold` is 0.96, so every must-abstain check abstains at retrieval, before any answer call. That includes row 19 as support, which reached the answer model under the 0.8 setting. The margins are narrow (0.016 below, 0.028 above) and were fitted on 22 checks, so the threshold must be re-checked whenever the corpus, the reranker or its input changes. The per-row table is in `data/top20_questions.md`.
+
+### Candidates back up to 20 (post-merge)
+
+The golden eval at 15 candidates passed 21 of 22 checks. The miss was row 13 ("What browsers does enteliWEB support?"). Its answer, enteliWEB's `## Client Browser` section, scores 1.000 with MiniLM, the best of any candidate, but fuses at rank 18, so 15 cut it before reranking. The 30 → 15 check in the A/B above missed this, because it counted the right document in the top 5, not the right section.
+
+Both settings were timed on the same fused pools, interleaved in one process, over the 22 golden checks, with titles making every pair longer:
+
+| Candidates | Rerank p50 | Rerank p95 | Golden (`make eval`) |
+|---|---|---|---|
+| 15 | 1,336 ms | 2,637 ms | 21 / 22 (row 13 abstains) |
+| 20 | 2,045 ms | 3,419 ms | 22 / 22 |
+
+Jason chose 20. The rerank p95 is about 0.4 s over the 3 s rerank budget, and inside the 8 s end-to-end target. Threshold 0.96 holds at 20: the scan was repeated with the same split (answerable 0.988–1.000, must-abstain up to 0.944).

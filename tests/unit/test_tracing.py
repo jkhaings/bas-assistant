@@ -114,6 +114,7 @@ def test_no_span_carries_the_raw_question(client: TestClient, spans: InMemorySpa
     assert not [value for value in values if "jane.doe@example.com" in value]
     (root,) = _named(spans, "POST /ask")
     assert "<EMAIL_ADDRESS>" in str((root.attributes or {})["langfuse.trace.input"])
+    assert "<EMAIL_ADDRESS>" in str((root.attributes or {})["langfuse.observation.input"])
 
 
 def test_the_root_span_keeps_no_user_agent_or_client_address(
