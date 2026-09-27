@@ -11,6 +11,7 @@
 | `LANGFUSE_PUBLIC_KEY` | same | same | Langfuse dashboard |
 | `LANGFUSE_SECRET_KEY` | same | same | Langfuse dashboard |
 | `GRAFANA_ADMIN_PASSWORD` | same | same | generated locally |
+| `POSTGRES_PASSWORD` | same | same | generated locally (`openssl rand -hex 16`) |
 
 The droplet file `/etc/bas-assistant.env` is owned by root, mode 600.
 Docker Compose reads it via `env_file: ${HOME}/.bas-assistant.env` (dev)

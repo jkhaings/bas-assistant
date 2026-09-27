@@ -5,10 +5,11 @@ PYTHON  := uv run python
 PYTEST  := uv run pytest
 RUFF    := uv run ruff
 MYPY    := uv run mypy
+ALEMBIC := uv run alembic
 
 # ── required env variable names (values never printed) ──────────────────────
 REQUIRED_VARS := OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY ADMIN_TOKEN \
-                 GRAFANA_ADMIN_PASSWORD
+                 GRAFANA_ADMIN_PASSWORD POSTGRES_PASSWORD
 # Optional until session D mints them from the self-hosted Langfuse instance
 OPTIONAL_LANGFUSE_VARS := LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
 
@@ -51,8 +52,11 @@ down:
 test:
 	$(PYTEST) -m unit
 
-test-int:
-	@echo "not implemented until session A" >&2; exit 1
+test-int: check-env
+	@ENV_FILE="$$HOME/.bas-assistant.env"; \
+	set -a; . "$$ENV_FILE"; set +a; \
+	export POSTGRES_HOST=localhost POSTGRES_PORT=5433 POSTGRES_DB=bas_test; \
+	$(ALEMBIC) upgrade head && $(PYTEST) -m integration
 
 # ── quality ──────────────────────────────────────────────────────────────────
 lint:
@@ -73,7 +77,7 @@ preflight: lint test
 
 # ── data ─────────────────────────────────────────────────────────────────────
 ingest:
-	@echo "not implemented until session A" >&2; exit 1
+	docker compose exec app python -m bas_assistant.ingest
 
 eval:
 	@echo "not implemented until session C" >&2; exit 1
