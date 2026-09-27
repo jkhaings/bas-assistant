@@ -61,8 +61,8 @@ def create_app(lifespan: Lifespan, web_dist: Path = WEB_DIST) -> FastAPI:
         exclude_spans=["send", "receive"],
         server_request_hook=drop_client_details,
     )
-    # Mounted last, so every API route above matches first. The UI routes by URL hash, so only
-    # index.html and /assets are served from here.
+    # Mounted last, so every API route above matches first. The UI routes by URL hash, so no
+    # page path can shadow an API path; this serves index.html, /assets and /img.
     if web_dist.is_dir():
         app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
     return app

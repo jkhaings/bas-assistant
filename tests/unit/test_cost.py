@@ -156,7 +156,7 @@ def test_an_abstain_cached_before_an_ingest_is_not_served_after_it(
     runtime: AppRuntime, retriever: FakeRetriever
 ) -> None:
     corpus = ["empty"]
-    client = make_client(replace(runtime, corpus_version=lambda: corpus[0]))
+    client = make_client(replace(runtime, read_corpus_version=lambda: corpus[0]))
     retriever.passages = []
     ask(client, "How much power does it draw?")
     cached = ask(client, "How much power does it draw?").json()

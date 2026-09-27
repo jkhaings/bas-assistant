@@ -21,8 +21,8 @@ This file becomes `docs/ARCHITECTURE.md` in the repo. Keep it current-state trut
 | A — retrieval | `a-retrieval` | Shipped: ingest (crawl/parse/chunk/embed), hybrid retrieval, `GET /documents`; its retrieval-only `/ask` is now `POST /search` |
 | B — graph | `b-graph` | Merged to main: LiteLLM proxy (fast / strong / embed, embeddings included), router, Redis cache, `usage` + receipt, daily cap + allowance, LangGraph with human gate on a Postgres checkpointer, retrieve node on A's hybrid search, `/ask`, `/ask/stream`, `/approve`, `/threads/{id}/history`, `/tickets`, `/requests/{id}/receipt` |
 | C — guardrails | `c-guardrails` | Merged to main: Presidio input redaction before storage and models, injection/off-topic rail (patterns + router flags → `refuse`), output PII check, per-IP limiter, one limit error shape, audit row on every decision, `/approve` tool allowlist, key-budget 429, prompt versioning, golden set (`make eval`) + RAGAS + `eval_runs` + `GET /evals/latest`, red team (`make redteam`), `docs/security.md`. Also retrieval (document title in lexical rank and rerank, threshold 0.7) and crawler retries |
-| D — observability | `d-observability` | Built on branch, not merged: reranker loaded at startup, 20 candidates, MiniLM cross-encoder (ADR 0003); OpenTelemetry traces to self-hosted Langfuse; Prometheus `/metrics`; Grafana Budget and Quality & adoption dashboards on `dash_*` views with alert rules; `POST /requests/{id}/feedback` and `/flag`; JSON logs with request_id and trace_id |
-| E — ship | `e-ship` | Not started |
+| D — observability | `d-observability` | Merged to main: reranker loaded at startup, 20 candidates, MiniLM cross-encoder (ADR 0003); OpenTelemetry traces to self-hosted Langfuse; Prometheus `/metrics`; Grafana Budget and Quality & adoption dashboards on `dash_*` views with alert rules; `POST /requests/{id}/feedback` and `/flag`; JSON logs with request_id and trace_id |
+| E — ship | `e-ship` | Built on branch, deployed at https://bas.jasonkhaings.com: web app (chat with streaming and citations, feedback, receipts, approvals, embedded dashboards, evals, How I built this) served by FastAPI; `GET /budget`; answer-cache key with a corpus version read from the documents table; prod compose with Caddy and no Langfuse; droplet setup, deploy and release scripts; CI builds and tests the web app. Tried and reverted: a per-document passage cap |
 
 
 ## 1. What it does, who it's for
@@ -535,7 +535,7 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
   As built (sessions A+B): `make up` starts `migrate` (one-shot `alembic upgrade head`), app, Postgres + pgvector (127.0.0.1:5433, password from the env file), Redis (127.0.0.1:6379, for host-side tests) and the LiteLLM proxy (127.0.0.1:4000, image pinned by digest, its `DATABASE_URL` assembled in the container from `POSTGRES_PASSWORD`), then registers the virtual keys.
   Session D adds:
   - Prometheus (127.0.0.1:9090) and Grafana (127.0.0.1:3000, served at `/grafana`).
-  - Langfuse through `include: deploy/langfuse/compose.yml` (web on 127.0.0.1:3001, plus worker, ClickHouse, MinIO, Postgres 17 and Redis of its own, none published). Its containers read only `~/.bas-assistant-langfuse.env`, because its variable names collide with ours and it has no use for the vendor keys.
+  - Langfuse through `include: deploy/langfuse/compose.yml` (web on 127.0.0.1:3001, plus worker, ClickHouse, MinIO, Postgres 17 and Redis of its own, none published). Since session E its services carry the compose profile `langfuse`: off unless `COMPOSE_PROFILES=langfuse make up`. Its containers read only `~/.bas-assistant-langfuse.env`, because its variable names collide with ours and it has no use for the vendor keys.
   - `make observability-secrets` writes that file once, and appends `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `GRAFANA_DB_PASSWORD` to the main env file.
   - `make up` ends with `make grafana-db-user`.
 
@@ -560,8 +560,9 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
     the env file. Logs are capped as in dev. The network has a fixed subnet, and the app sets
     `FORWARDED_ALLOW_IPS` to it: uvicorn then keys the per-IP limit on the visitor's address from
     Caddy's `X-Forwarded-For`, not on Caddy.
-  - `deploy/Caddyfile`: `/metrics*` → 404, `/grafana*` → Grafana (sub-path kept), everything else →
-    the app, which serves the API and the web build. HSTS and nosniff headers.
+  - `deploy/Caddyfile`: `/metrics*` and `/grafana/metrics*` → 404, `/grafana*` → Grafana (sub-path
+    kept), everything else → the app, which serves the API and the web build. HSTS, nosniff, and
+    `frame-ancestors 'self'`, so only the app itself can frame its pages.
   - `deploy/deploy.sh <ssh-target> [git-ref]` runs on the laptop. The droplet cannot read the
     private repo and the branch is pushed once, so it sends `git archive` of a committed ref, plus
     the crawl cache in `data/raw`. On the droplet it builds the image (`bas-assistant-app:prod`,
@@ -569,7 +570,13 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
     Grafana starts, starts the stack, registers the LiteLLM virtual keys, and writes `REVISION`.
     With an empty corpus it stops before Caddy, so the link opens only after `make ingest`. Then it
     starts Caddy and smoke-tests `/healthz` and one `/ask` over HTTPS. Rolling back is deploying
-    the previous ref.
+    the previous ref (files a newer ref added stay, and migrations never run down). The droplet half is `deploy/release.sh`, shipped with the tree: fed through
+    ssh's stdin, `docker compose run` swallowed the rest of the script on the first try.
+  - A cold ingest on the droplet (Sep 27) used 2.5 GB in the ingest process alone, with the app's
+    reranker and torch resident beside it. It filled RAM and the 2 GB of swap and stalled after 12
+    of 70 PDFs. With the app stopped, it runs in a one-off container
+    (`docker compose run --rm --no-deps -T app python -m bas_assistant.ingest`), and `make ingest`
+    afterwards confirms that every source is unchanged. README runbook, "Re-index".
 - **CI**: one GitHub Actions workflow, one job (pull_request only, concurrency cancel-in-progress): gitleaks, ruff, mypy, `pytest -m unit`, then `npm ci`, `npm test` and `npm run build` in `web/` (session E). uv and npm caches on. No LLM calls, no image push, no `secrets.` refs.
 - **Abuse controls (public link)**: per-IP sliding-window rate limit, global daily USD cap (demo pauses with a message and a reset time), vendor-side hard spend limits on every key, exact-match cache, `max_tokens` caps. Admin token required for /approve.
 - **Stretch (optional session)**: Terraform → Azure Container Apps + Key Vault + App Insights, Entra ID OIDC login replacing the role switcher. Adds the Microsoft names to the story; not needed for the demo link.

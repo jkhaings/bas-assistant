@@ -209,6 +209,7 @@ def test_corpus_version_moves_when_a_document_is_added_or_replaced(session: Sess
     replaced, _ = _add_document(session, acl_groups=["all"], text="Version check, second cut.")
     after_replace = current_corpus_version(engine, "2")
     unchanged = current_corpus_version(engine, "2")
+    engine.dispose()
     session.delete(replaced)
     session.commit()
 

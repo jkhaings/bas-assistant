@@ -7,11 +7,18 @@
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
+		# Only this site may frame its pages (the Dashboards tab frames /grafana); no other site
+		# can frame the Approvals tab.
+		Content-Security-Policy "frame-ancestors 'self'"
 		-Server
 	}
 
-	# Prometheus scrapes the app on the compose network; the raw counters stay off the link.
+	# Prometheus scrapes the app on the compose network; the raw counters, the app's and
+	# Grafana's own, stay off the link.
 	handle /metrics* {
+		respond 404
+	}
+	handle /grafana/metrics* {
 		respond 404
 	}
 

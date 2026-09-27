@@ -115,8 +115,9 @@ observability-secrets:
 
 # Login for the read-only role behind Grafana's Postgres data source (migration 0005); the
 # password reaches psql through the environment, never the command line.
-# TODO(session E): Grafana starts before this runs, so the first alert evaluations after a fresh
-# `make up` fail on the login; set the password before Grafana starts in the prod compose.
+# On the droplet, deploy/release.sh sets it before Grafana starts.
+# TODO(post-weekend): locally Grafana starts first, so the first alert evaluations after a fresh
+# `make up` fail on the login (HANDOFF_E.md).
 grafana-db-user:
 	@$(WITH_ENV) printf '%s\n' '\getenv pw GRAFANA_DB_PASSWORD' \
 	  "ALTER ROLE grafana_reader LOGIN PASSWORD :'pw';" \

@@ -153,7 +153,7 @@ def open_turn(
     key = None
     cached = None
     if thread_id is None:
-        key = cache_key(question, user.role, runtime.corpus_version(), PROMPT_VERSION)
+        key = cache_key(question, user.role, runtime.read_corpus_version(), PROMPT_VERSION)
         cached = get_cached(runtime.redis, key, TurnResult)
     # A cache hit costs nothing, so it does not count against the allowance.
     if cached is None:

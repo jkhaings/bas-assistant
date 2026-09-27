@@ -33,7 +33,7 @@ class AppRuntime:
     daily_usd_cap: Decimal
     user_daily_questions: int
     # Read per question: ingest runs in its own process, so a value taken at startup goes stale.
-    corpus_version: Callable[[], str]
+    read_corpus_version: Callable[[], str]
     # Per IP per minute: with no login, the only control that separates one visitor from another.
     ip_rate_limit: int
 
@@ -73,7 +73,7 @@ def open_runtime(settings: Settings, retrieve: Retriever) -> Iterator[AppRuntime
             admin_token=settings.admin_token,
             daily_usd_cap=settings.daily_usd_cap,
             user_daily_questions=settings.user_daily_questions,
-            corpus_version=partial(current_corpus_version, engine, settings.corpus_version),
+            read_corpus_version=partial(current_corpus_version, engine, settings.corpus_version),
             ip_rate_limit=settings.ip_rate_limit,
         )
     engine.dispose()

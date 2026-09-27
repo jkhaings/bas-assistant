@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # --- web stage: the React build FastAPI serves at / ---
-FROM node:24-slim AS web
+# node 24-slim, pinned by digest like the LiteLLM image (multi-arch index: the droplet is x86_64).
+FROM node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci

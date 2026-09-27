@@ -7,7 +7,7 @@
 # ClickHouse alone used about one core while idle, which the CPU reranker competes with, and its
 # log filled the Docker disk on Sep 27 (drop order #2, session E). With it off, the app still
 # exports spans when LANGFUSE_* keys are set, and the exporter logs that it cannot reach it.
-# TODO(post-weekend): pin the image versions (4.46.0 ran in session D).
+# TODO(post-weekend): pin the image versions (4.46.0 ran in session D; HANDOFF_E.md).
 #
 # Secrets come from ~/.bas-assistant-langfuse.env (`make observability-secrets`); the
 # project keys in it are the app's LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY.

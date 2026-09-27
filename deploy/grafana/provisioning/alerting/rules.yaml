@@ -1,6 +1,6 @@
 # Grafana-managed alert rules. No contact point is provisioned yet: firing alerts show in
 # Grafana's alerting page only (docs/ARCHITECTURE.md §8, deferred).
-# TODO(session E): an email or webhook contact point for the droplet.
+# TODO(post-weekend): an email or webhook contact point for the droplet (HANDOFF_E.md).
 apiVersion: 1
 
 groups:

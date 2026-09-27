@@ -27,7 +27,8 @@ class Settings(BaseSettings):
         extra="ignore",  # ignore unrecognised env vars
     )
 
-    # TODO(session E): only the LiteLLM container needs vendor keys; split the env files.
+    # TODO(post-weekend): only the LiteLLM container needs vendor keys; the app never reads
+    # these, so drop them here and give the app its own variables (HANDOFF_E.md, Known gaps).
     openai_api_key: SecretStr
     anthropic_api_key: SecretStr
     gemini_api_key: SecretStr
