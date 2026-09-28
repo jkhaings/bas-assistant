@@ -158,6 +158,8 @@ preflight: lint test
 	@echo "preflight: PASS"
 
 # ── data ─────────────────────────────────────────────────────────────────────
+# TODO(post-weekend): on the 4 GB droplet a cold ingest beside the running app fills RAM and
+# swap; stop the app and run it in a one-off container (README runbook, HANDOFF_E.md).
 ingest:
 	docker compose exec app python -m bas_assistant.ingest
 

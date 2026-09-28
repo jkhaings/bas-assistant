@@ -92,7 +92,7 @@ Built in session A, `src/bas_assistant/ingest/`:
 2. **Hash and skip**: content hash per source (raw bytes for a PDF; extracted text for HTML, since HTML carries per-request nonces that would defeat a raw-byte hash) — unchanged sources are skipped, changed ones replaced in one transaction. There is no `retired` state yet: a source that disappears from discovery simply stops being re-ingested; its existing rows are not deleted.
 3. **Parse**: PDFs through Docling (`do_table_structure=True`, tables become markdown tables, one page at a time up to 20 pages); on any Docling failure or empty output, falls back to pypdfium2's plain-text extraction and records `parse_quality="fallback"`. HTML product pages through selectolax: headings, paragraphs, list items and tables in document order (selectolax's compound CSS selectors do **not** preserve document order — verified against real markup — so content is walked depth-first instead), nav/footer/script/style dropped.
 4. **Chunk**: LlamaIndex `MarkdownNodeParser` splits each page into heading sections (further split by `SentenceSplitter` if a section exceeds ~1500 tokens) as parents; `SentenceSplitter(chunk_size=300, chunk_overlap=50)` with a custom line-aware tokenizer splits each parent into children so a markdown table row is never split across children. Each child records page, parent, and (via the parent/document relationship) product, doc_type, acl_groups, and source_url.
-5. **Embed**: children are embedded in batches of 100 through a thin `EmbeddingProvider` (an OpenAI-compatible `/v1/embeddings` client) — not yet the LiteLLM alias `embed`, which is session B's job; the base URL and model are both settings, so B repoints them without touching this code. One `usage` row per batch, `stage="embed"`, `request_id` null.
+5. **Embed**: children are embedded in batches of 100 through a thin `EmbeddingProvider` (an OpenAI-compatible `/v1/embeddings` client) — since session B, pointed at the LiteLLM proxy's `embed` alias through the base-URL and model settings, without touching this code. One `usage` row per batch, `stage="embed"`, `request_id` null.
 6. **Index**: SQLAlchemy upserts documents/parents/chunks in one transaction per source; `tsv` is a Postgres `GENERATED ALWAYS AS (to_tsvector(...))` column with a GIN index; `embedding` has an HNSW index (`vector_cosine_ops`).
 7. **Report**: `python -m bas_assistant.ingest` logs one structured line: documents ingested/updated/skipped/failed by source type, parents and chunks written, the parse_quality distribution, embed tokens and USD, and elapsed time.
 
@@ -499,9 +499,16 @@ Two interfaces people look at:
    - **Evals**: golden pass rate, RAGAS by category and red-team cases from `GET /evals/latest`,
      with a plain-words paragraph per metric.
    - **How I built this**: a long-form page written from the live run's numbers.
-   - **Tests**: Vitest and Testing Library with a stubbed `fetch`, covering chat streaming,
-     citations, the receipt, the role switch, the approval flow, the budget banner and error text.
-     CI runs `npm test` and `npm run build`.
+   - **Tests**: Vitest and Testing Library with a stubbed `fetch`, covering:
+     - chat streaming and citations;
+     - a follow-up thread and the stream's error events;
+     - the paused-ticket callout;
+     - the receipt, feedback votes and flags;
+     - the role switch, the approval flow and the budget banner;
+     - the Evals page's score shapes and low-score marker, and the Dashboards iframes;
+     - error text.
+
+     CI runs `npm test` and `npm run build`. There is no browser end-to-end test.
 2. **The dashboard (Grafana)**: two dashboards, one Grafana, embedded in the app's Dashboards tab and also reachable at /grafana. Data sources: Prometheus (live ops) and Postgres directly (business numbers).
    - **Budget**: spend today, month-to-date vs budget, cost per answer, cost by model and by stage (router / embed / answer), cost per user and per team, cache hit rate, projected month-end, budget thresholds drawn on the panels.
    - **Quality and adoption**: weekly active users, questions per user, abstain rate, refusal rate, validation failures, p95 latency, ticket escalation rate, and the two letter numbers: used-without-edits % and flagged-wrong %.

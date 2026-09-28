@@ -71,8 +71,10 @@ human gate → act → finish.
 
 ## The numbers
 
-From the live golden run against https://bas.jasonkhaings.com on Sep 27 2026 (22 checks; RAGAS
-judge = the `fast` alias, gpt-4o-mini). Full table: [eval/results/latest.md](eval/results/latest.md).
+From the live eval run against https://bas.jasonkhaings.com on Sep 27 2026: the golden set's 22
+checks plus the live-graph checks in the same `make eval`. The RAGAS judge is the `fast` alias
+(gpt-4o-mini). Costs and latency come from the prod `usage` and `requests` tables over that run
+(`outputs/HANDOFF_E.md`). Full table: [eval/results/latest.md](eval/results/latest.md).
 
 | | |
 |---|---|
@@ -83,7 +85,7 @@ judge = the `fast` alias, gpt-4o-mini). Full table: [eval/results/latest.md](eva
 | Red team | 6/6 (injection, planted instructions, image exfiltration, PII, support ticket, off-topic) |
 | Cost per simple answer (`fast` route) | $0.00031 median (16 answers) |
 | Cost per complex answer (`strong` route) | $0.0089 median (3 answers) |
-| Cost of an abstain / a cache hit | about $0.00007 (router and query embedding) / $0 |
+| Cost of an abstain / a cache hit | $0.00007 to $0.00008 (router and query embedding) / $0 |
 | Cost of a full eval run (answers + RAGAS judge) | $0.053 ($0.022 + $0.031) |
 | Answer latency, p50 / p95 (2-vCPU droplet, CPU reranker) | 6.0 s / 9.5 s (rerank alone 2.9 s / 4.1 s) |
 

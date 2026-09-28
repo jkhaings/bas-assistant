@@ -196,3 +196,26 @@ test("flagging an answer sends the trimmed reason and shows it flagged", async (
     expect(flag?.method).toBe("POST");
     expect(flag?.body).toEqual({ reason: "Wrong page" });
 });
+
+test("a paused answer shows the proposed ticket and points to the Approvals tab", async () => {
+    const paused = {
+        ...ANSWER,
+        decision: "paused" as const,
+        approval_required: true,
+        ticket_id: "f70ea70e-95e5-47ac-9906-2265a87aac31",
+    };
+    stubApi([
+        ...shellRoutes(),
+        { method: "POST", path: "/ask/stream", respond: () => sse(sseEvent("answer", paused)) },
+    ]);
+    render(<App />);
+
+    await ask("The eBM-800 will not power up, please open a ticket.");
+
+    const callout = (await screen.findByText(/Ticket proposed/)).closest("p");
+    expect(callout).toHaveTextContent("f70ea70e-95e5-47ac-9906-2265a87aac31");
+    expect(within(callout as HTMLElement).getByRole("link", { name: "Approvals tab" })).toHaveAttribute(
+        "href",
+        "#/approvals",
+    );
+});

@@ -17,7 +17,7 @@ export function Cost() {
                 one about {RUN.complexAnswerUsd}. A repeated question costs nothing, and an
                 abstain costs only the router call and the query embedding, about{" "}
                 {RUN.abstainUsd}. A full evaluation
-                run, 22 questions plus the RAGAS judge, cost about {RUN.evalRunUsd}.
+                run, 22 checks plus the RAGAS judge, cost about {RUN.evalRunUsd}.
             </p>
             <p>The controls, from the cheapest to the bluntest:</p>
             <ul className="list-disc space-y-1 pl-6">

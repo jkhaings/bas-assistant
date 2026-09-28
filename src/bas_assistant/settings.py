@@ -28,7 +28,8 @@ class Settings(BaseSettings):
     )
 
     # TODO(post-weekend): only the LiteLLM container needs vendor keys; the app never reads
-    # these, so drop them here and give the app its own variables (HANDOFF_E.md, Known gaps).
+    # these, so drop them here and give the app, migrate and Postgres their own variables instead
+    # of the whole env file (docker-compose.prod.yml; HANDOFF_E.md, Known gaps).
     openai_api_key: SecretStr
     anthropic_api_key: SecretStr
     gemini_api_key: SecretStr
@@ -77,6 +78,8 @@ class Settings(BaseSettings):
     # answerable rows' top score 0.988-1.000, must-abstain rows 0.00-0.944 (row 19 as support).
     # 0.96 makes every must-abstain row abstain before any answer call; the margins are narrow
     # (0.016 and 0.028), so re-check it whenever the corpus or the reranker changes.
+    # TODO(post-weekend): a fault report that retrieves nothing above it abstains before the
+    # answer model, so no ticket can be drafted for it (HANDOFF_E.md, Known gaps).
     rerank_threshold: float = 0.96
 
     @property

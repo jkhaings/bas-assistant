@@ -40,6 +40,8 @@ groups:
               conditions:
                 - evaluator: {type: gt, params: [0.05]}
 
+      # TODO(post-weekend): the droplet's measured p95 is 9.5 s (2 vCPU, CPU reranker), so this
+      # fires under normal load; re-set it for the droplet (HANDOFF_E.md).
       - uid: bas-p95-latency
         title: p95 answer latency above 8 s
         condition: C

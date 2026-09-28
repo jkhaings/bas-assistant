@@ -81,6 +81,9 @@ def _judges(
     return LangchainLLMWrapper(chat), LangchainEmbeddingsWrapper(embeddings)
 
 
+# TODO(post-weekend): the answer model reads each passage with its document title; the judge gets
+# the section text alone, so a sibling-shared section ("BACnet Building Controller (B-BC)") never
+# names the product and the claim scores unsupported (protocol faithfulness, HANDOFF_E.md).
 def _contexts(engine: Engine, request_id: UUID | None) -> list[str]:
     """The parents the answer model read for the request, in rank order."""
     query = (
