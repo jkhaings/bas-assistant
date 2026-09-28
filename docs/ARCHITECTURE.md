@@ -594,8 +594,11 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
     also tagged with the short sha), runs migrations, sets the `grafana_reader` password before
     Grafana starts, starts the stack, registers the LiteLLM virtual keys, and writes `REVISION`.
     With an empty corpus it stops before Caddy, so the link opens only after `make ingest`. Then it
-    starts Caddy and smoke-tests `/healthz` and one `/ask` over HTTPS. Rolling back is deploying
-    the previous ref (files a newer ref added stay, and migrations never run down). The droplet half is `deploy/release.sh`, shipped with the tree: fed through
+    starts Caddy and smoke-tests `/healthz` and one `/ask` over HTTPS. The ref is unpacked into
+    an empty staging directory and synced over `/opt/bas-assistant` with `rsync --delete`, which
+    keeps only the droplet's own state (`.env`, `REVISION`, `data/raw/`, `.venv/`,
+    `eval/results/*.jsonl`), so a file the ref no longer tracks is removed. Rolling back is
+    deploying the previous ref (migrations never run down). The droplet half is `deploy/release.sh`, shipped with the tree: fed through
     ssh's stdin, `docker compose run` swallowed the rest of the script on the first try.
   - A cold ingest on the droplet (Sep 27) used 2.5 GB in the ingest process alone, with the app's
     reranker and torch resident beside it. It filled RAM and the 2 GB of swap and stalled after 12
