@@ -444,7 +444,7 @@ locations and tests, and the OWASP LLM Top 10 (2025) mapping.
 
 ## 10. The two numbers from the cover letter
 
-- **Used without edits**: every answer carries three buttons: used as-is / used with edits / not used. Stored in `feedback`. Reported as % of answered requests, weekly.
+- **Used without edits**: in a deployment the support team rates each answer used as-is / used with edits / not used. Stored in `feedback`. Reported as % of answered requests, weekly. The public demo hides the buttons, because its visitors are not the support team; the endpoint and the dashboard panel stay.
 - **Sounded right but wasn't**: any user can flag an answer with a reason; stored in `flags`. Automatic proxy: RAGAS faithfulness below threshold on sampled production answers. Reported as % of answered requests, weekly, with the reasons listed.
 - **Shadow mode**: four weeks where the team works as normal and the assistant answers beside them. Decision rule written down in advance: expand to the next team if flagged rate stays under 2% and used-as-is is above 60%.
 
@@ -463,7 +463,7 @@ The RAGAS-faithfulness proxy on sampled production answers is not built.
 
 Two interfaces people look at:
 
-1. **The product (web app)**: React + TypeScript. No login (every visitor asks as support; a role switcher on the unlinked `#/admin` page), threads, streaming answers, citation cards, feedback buttons, a "Show cost" receipt on every answer (route, model, tokens, cost, timings, cache hit), approvals for admins on `#/admin`, and a Dashboards tab that embeds the two Grafana dashboards same-origin. This is the demo, with a "How I built this" page.
+1. **The product (web app)**: React + TypeScript. No login (every visitor asks as support; a role switcher on the unlinked `#/admin` page), threads, streaming answers, citation cards, a flag button, a "Show cost" receipt on every answer (route, model, tokens, cost, timings, cache hit), approvals for admins on `#/admin`, and a Dashboards tab that embeds the two Grafana dashboards same-origin. This is the demo, with a "How I built this" page.
 
    **As built (session E)**, `web/`:
    - **Stack**: Vite, React 19, strict TypeScript and Tailwind v4 (ADR 0002). The typed client
@@ -486,7 +486,8 @@ Two interfaces people look at:
        cannot POST. It shows the node steps as they finish, then the answer as plain text, never
        rendered markdown or HTML.
      - Citation cards: document, page and link; PDF links open at `#page=N`.
-     - A three-way feedback control, flag-with-reason, and "Show cost", which fetches the receipt.
+     - Flag-with-reason and "Show cost", which fetches the receipt. There are no feedback
+       buttons: `POST /requests/{id}/feedback` stays, but the web app does not call it.
      - A turn paused at the gate (`approval_required`), or one carrying the graph's no-ticket
        note, shows the answer as usual with one quiet line, "Flagged for follow-up", and no
        ticket controls; the note itself is not shown. A paused turn's badge reads answered when
@@ -507,15 +508,20 @@ Two interfaces people look at:
    - **Dashboards**: both Grafana dashboards in same-origin iframes (`/grafana/d/…?kiosk`).
    - **Evals**: golden pass rate, RAGAS by category and red-team cases from `GET /evals/latest`,
      with a plain-words paragraph per metric.
-   - **How I built this**: a long-form page written from the live run's numbers.
+   - **How I built this**: a first-person walk through the pipeline in the order things happen,
+     written from the live run's numbers. Three steps (before a question, a question arrives,
+     around all of it) hold nine short sections, each ending with a "Tools:" line and one link
+     into the app or the repo, then four known problems. The numbers are in
+     `web/src/pages/howIBuiltThis/run.ts`.
    - **Tests**: Vitest and Testing Library with a stubbed `fetch`, covering:
      - chat streaming and citations;
      - a follow-up thread and the stream's error events;
      - the "Flagged for follow-up" line in place of any ticket controls;
-     - the receipt, feedback votes and flags;
+     - the receipt and flags, and that an answer has no feedback buttons;
      - a main screen with no role switcher, admin token or Approvals tab; the role switch and
        the approval flow on `#/admin`; the budget banner;
      - the Evals page's score shapes and low-score marker, and the Dashboards iframes;
+     - the How I built this headings in order, a "Tools:" line closing each section, and no "we";
      - error text.
 
      CI runs `npm test` and `npm run build`. There is no browser end-to-end test.

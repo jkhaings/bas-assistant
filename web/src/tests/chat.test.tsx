@@ -7,7 +7,6 @@ import { json, noContent, sse, sseEvent, stubApi } from "./fakeApi";
 import { ANSWER, RECEIPT, REQUEST_ID, shellRoutes } from "./fixtures";
 
 const HAPPY_PATH = ["screen", "route", "retrieve", "answer", "validate", "finish"];
-const FEEDBACK_PATH = `/requests/${REQUEST_ID}/feedback`;
 const FLAG_PATH = `/requests/${REQUEST_ID}/flag`;
 
 function answerStream() {
@@ -130,52 +129,14 @@ test("an error event on the stream shows its message", async () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Models are down.");
 });
 
-test("Used with edits records the feedback and shows as selected", async () => {
-    const calls = stubApi([
-        ...shellRoutes(),
-        { method: "POST", path: "/ask/stream", respond: answerStream },
-        { method: "POST", path: FEEDBACK_PATH, respond: noContent },
-    ]);
+test("an answer has no used-as-is, used-with-edits or not-used buttons", async () => {
+    stubApi([...shellRoutes(), { method: "POST", path: "/ask/stream", respond: answerStream }]);
     render(<App />);
-    const user = await ask("How many inputs does the eZNT-T331 have?");
-    await screen.findByText(ANSWER.answer);
 
-    await user.click(screen.getByRole("button", { name: "Used with edits" }));
+    await ask("How many inputs does the eZNT-T331 have?");
 
-    expect(
-        await screen.findByRole("button", { name: "Used with edits", pressed: true }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Used as-is" })).toHaveAttribute(
-        "aria-pressed",
-        "false",
-    );
-    const feedback = calls.find((call) => call.path === FEEDBACK_PATH);
-    expect(feedback?.method).toBe("POST");
-    expect(feedback?.body).toEqual({ value: "used_with_edits" });
-    expect(feedback?.headers.get("X-Demo-Role")).toBe("support");
-});
-
-test("feedback the server rejects shows its error and selects nothing", async () => {
-    stubApi([
-        ...shellRoutes(),
-        { method: "POST", path: "/ask/stream", respond: answerStream },
-        {
-            method: "POST",
-            path: FEEDBACK_PATH,
-            respond: () => json({ detail: "request not found" }, 404),
-        },
-    ]);
-    render(<App />);
-    const user = await ask("How many inputs does the eZNT-T331 have?");
-    await screen.findByText(ANSWER.answer);
-
-    await user.click(screen.getByRole("button", { name: "Used with edits" }));
-
-    expect(await screen.findByText("Request not found")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Used with edits" })).toHaveAttribute(
-        "aria-pressed",
-        "false",
-    );
+    expect(await screen.findByText(ANSWER.answer)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /used/i })).not.toBeInTheDocument();
 });
 
 test("flagging an answer sends the trimmed reason and shows it flagged", async () => {

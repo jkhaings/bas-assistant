@@ -2,7 +2,6 @@ import type { AskResponse, Citation, Decision } from "../../api/types";
 import { CitationCard } from "./CitationCard";
 import { CostToggle } from "./CostToggle";
 import { DecisionBadge } from "./DecisionBadge";
-import { FeedbackControl } from "./FeedbackControl";
 import { FlagControl } from "./FlagControl";
 
 function routeLine({ route, model }: AskResponse): string {
@@ -57,7 +56,6 @@ export function AnswerView({ response }: { response: AskResponse }) {
             )}
             {response.citations.length > 0 && <Sources citations={response.citations} />}
             <div className="space-y-3 border-t border-stone-100 pt-3">
-                <FeedbackControl requestId={response.request_id} />
                 <FlagControl requestId={response.request_id} />
                 <CostToggle requestId={response.request_id} />
             </div>
