@@ -167,8 +167,10 @@ smoke-tests over HTTPS. On an empty corpus it stops before Caddy. Then run `make
 `/opt/bas-assistant` and deploy again, so the link opens only once there is a corpus.
 
 **Roll back.** Deploy the previous ref (`cat /opt/bas-assistant/REVISION` shows the current one).
-The tree is unpacked over the old one, so files a newer ref added stay, and migrations never run
-down: rolling back across a migration needs `alembic downgrade` in the app container first.
+Each deploy syncs the ref's tree over the app directory and deletes files the ref doesn't track;
+only the droplet's `.env`, `REVISION`, crawl cache, virtualenv and eval results stay. Migrations
+never run down: rolling back across a migration needs `alembic downgrade` in the app container
+first.
 
 **Rotate keys.** See [docs/security-keys.md](docs/security-keys.md): edit
 `/etc/bas-assistant.env`, then `docker compose up -d --force-recreate litellm app` (`restart` keeps
