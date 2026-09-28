@@ -10,6 +10,8 @@ evaluated, and audited.
 
 Built as a portfolio project. Not affiliated with Delta Controls. All copyrights or whatever rights belong
 to Delta Controls, please don't sue me LOL.
+The corpus is Delta Controls' public catalog sheets and product pages; this project is not affiliated
+with Delta Controls, and any content will be removed on request.
 
 ![A live answer: the node path, the answer, its citation card, feedback buttons and the cost receipt](docs/img/live-chat.png)
 
