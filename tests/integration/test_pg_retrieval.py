@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from bas_assistant.api.ask import _create_request, _record_result
 from bas_assistant.api.roles import Role
 from bas_assistant.db.activity import Request, Usage
-from bas_assistant.db.corpus import Chunk, Document, Parent
+from bas_assistant.db.corpus import Chunk, Document, Parent, current_corpus_version
 from bas_assistant.ingest.crawl import RawSource
 from bas_assistant.ingest.pipeline import run_ingest
 from bas_assistant.retrieval.pipeline import RetrievalResult, Timings
@@ -196,3 +196,23 @@ def test_ask_recording_writes_requests_and_usage_against_real_schema(session: Se
     usage_rows = list(session.scalars(select(Usage).where(Usage.request_id == request.id)))
     assert len(usage_rows) == 1
     assert usage_rows[0].stage == "embed"
+
+
+def test_corpus_version_moves_when_a_document_is_added_or_replaced(session: Session) -> None:
+    engine = create_engine(Settings().database_url)
+    before = current_corpus_version(engine, "2")
+    added, _ = _add_document(session, acl_groups=["all"], text="Version check, first cut.")
+    after_add = current_corpus_version(engine, "2")
+    # An ingest replaces a changed document by deleting it and inserting the new version.
+    session.delete(added)
+    session.commit()
+    replaced, _ = _add_document(session, acl_groups=["all"], text="Version check, second cut.")
+    after_replace = current_corpus_version(engine, "2")
+    unchanged = current_corpus_version(engine, "2")
+    engine.dispose()
+    session.delete(replaced)
+    session.commit()
+
+    assert len({before, after_add, after_replace}) == 3
+    assert unchanged == after_replace
+    assert after_replace.startswith("2.")

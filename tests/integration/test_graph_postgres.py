@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from functools import partial
 from uuid import uuid4
 
 import httpx
@@ -77,7 +78,7 @@ def _runtime(
         admin_token=SecretStr(_ADMIN_TOKEN),
         daily_usd_cap=Decimal(1000),
         user_daily_questions=1000,
-        corpus_version=str(uuid4()),
+        read_corpus_version=partial(str, uuid4()),
         ip_rate_limit=1000,
     )
 

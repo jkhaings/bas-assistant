@@ -9,7 +9,18 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ARRAY, Computed, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    ARRAY,
+    Computed,
+    DateTime,
+    Engine,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    select,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -91,3 +102,16 @@ class Chunk(Base):
 
     document: Mapped[Document] = relationship(back_populates="chunks")
     parent: Mapped[Parent] = relationship(back_populates="chunks")
+
+
+def current_corpus_version(engine: Engine, retrieval_version: str) -> str:
+    """The answer-cache version: the retrieval setting plus a mark that any corpus change moves.
+
+    An ingest re-inserts a changed document with a fresh `ingested_at` and adds new ones, which
+    raises the count, so no answer cached before it survives, including abstains cached while
+    the corpus was empty. An ingest that changes nothing leaves the version, and the cache, alone.
+    """
+    with engine.connect() as conn:
+        count, latest = conn.execute(select(func.count(), func.max(Document.ingested_at))).one()
+    stamp = latest.isoformat() if latest is not None else "none"
+    return f"{retrieval_version}.{count}.{stamp}"

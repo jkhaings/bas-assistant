@@ -1,6 +1,6 @@
 # Grafana-managed alert rules. No contact point is provisioned yet: firing alerts show in
 # Grafana's alerting page only (docs/ARCHITECTURE.md §8, deferred).
-# TODO(session E): an email or webhook contact point for the droplet.
+# TODO(post-weekend): an email or webhook contact point for the droplet (HANDOFF_E.md).
 apiVersion: 1
 
 groups:
@@ -40,6 +40,8 @@ groups:
               conditions:
                 - evaluator: {type: gt, params: [0.05]}
 
+      # TODO(post-weekend): the droplet's measured p95 is 9.5 s (2 vCPU, CPU reranker), so this
+      # fires under normal load; re-set it for the droplet (HANDOFF_E.md).
       - uid: bas-p95-latency
         title: p95 answer latency above 8 s
         condition: C

@@ -15,7 +15,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
-node_modules/
+**/node_modules/
+web/dist/
 
 # data (large, not needed in image)
 data/raw/

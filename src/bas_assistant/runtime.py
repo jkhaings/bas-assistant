@@ -1,9 +1,10 @@
 """Long-lived clients the API needs, opened once at startup."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import partial
 
 import httpx
 from fastapi import Request
@@ -18,6 +19,7 @@ from sqlalchemy import make_url
 from bas_assistant.agent.graph import CHECKPOINT_SERDE, Graph, build_graph
 from bas_assistant.agent.nodes import AgentContext
 from bas_assistant.agent.state import Retriever
+from bas_assistant.db.corpus import current_corpus_version
 from bas_assistant.db.engine import get_engine
 from bas_assistant.settings import Settings
 
@@ -30,7 +32,8 @@ class AppRuntime:
     admin_token: SecretStr
     daily_usd_cap: Decimal
     user_daily_questions: int
-    corpus_version: str
+    # Read per question: ingest runs in its own process, so a value taken at startup goes stale.
+    read_corpus_version: Callable[[], str]
     # Per IP per minute: with no login, the only control that separates one visitor from another.
     ip_rate_limit: int
 
@@ -70,7 +73,7 @@ def open_runtime(settings: Settings, retrieve: Retriever) -> Iterator[AppRuntime
             admin_token=settings.admin_token,
             daily_usd_cap=settings.daily_usd_cap,
             user_daily_questions=settings.user_daily_questions,
-            corpus_version=settings.corpus_version,
+            read_corpus_version=partial(current_corpus_version, engine, settings.corpus_version),
             ip_rate_limit=settings.ip_rate_limit,
         )
     engine.dispose()

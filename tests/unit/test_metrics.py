@@ -1,5 +1,6 @@
 """Behaviour: /metrics reports what the API did (the registry is process-wide, so deltas)."""
 
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -8,7 +9,8 @@ from prometheus_client import REGISTRY
 from sqlalchemy import Engine, select
 
 from bas_assistant.db.activity import Request
-from tests.graph_fakes import INPUT_TOKENS, FakeProxy, FakeRetriever, answer_json, ask
+from bas_assistant.main import create_app
+from tests.graph_fakes import INPUT_TOKENS, FakeProxy, FakeRetriever, answer_json, ask, no_startup
 
 pytestmark = pytest.mark.unit
 
@@ -110,3 +112,16 @@ def test_a_crash_outside_the_gateway_still_closes_the_request_as_failed(
     with engine.connect() as conn:
         decisions = list(conn.execute(select(Request.decision)).scalars())
     assert decisions == ["failed"]
+
+
+def test_web_app_files_are_not_counted_as_api_responses(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text("<title>bas-assistant</title>")
+    client = TestClient(create_app(no_startup, web_dist=tmp_path))
+    unmatched = _value("bas_http_requests_total", method="GET", route="unmatched", status="200")
+
+    client.get("/")
+
+    assert (
+        _value("bas_http_requests_total", method="GET", route="unmatched", status="200")
+        == unmatched
+    )

@@ -1,6 +1,6 @@
-# Golden set and RAGAS, 2026-09-27T20:08:52+00:00
+# Golden set and RAGAS, 2026-09-27T23:35:06+00:00
 
-Corpus version `2`, prompt version `a2d7b390625a`. Cost $0.0610 (answers $0.0304, RAGAS judge $0.0307).
+Corpus version `2.112.2026-09-27T23:17:56.018010+00:00`, prompt version `a2d7b390625a`. Cost $0.0529 (answers $0.0220, RAGAS judge $0.0309).
 
 ## Golden pass rate: 22/22 (100%)
 
@@ -33,10 +33,10 @@ Corpus version `2`, prompt version `a2d7b390625a`. Cost $0.0610 (answers $0.0304
 
 | Category | n | Faithfulness | Answer relevancy | Context precision | Context recall |
 |---|---|---|---|---|---|
-| compatibility | 3 | 1.000 | 0.806 | 0.983 | 1.000 |
-| engineer-only | 2 | 0.688 | 0.979 | 0.500 | 0.500 |
-| ordering | 3 | 0.889 | 0.898 | 0.889 | 1.000 |
-| protocol | 3 | 0.111 | 0.808 | 0.750 | 1.000 |
-| spec | 3 | 1.000 | 0.907 | 0.712 | 1.000 |
-| wiring-power | 3 | 0.889 | 1.000 | 1.000 | 1.000 |
-| overall | 17 | 0.767 | 0.895 | 0.824 | 0.941 |
+| compatibility | 3 | 1.000 | 0.824 | 0.983 | 1.000 |
+| engineer-only | 2 | 0.528 | 0.982 | 0.500 | 1.000 |
+| ordering | 3 | 1.000 | 0.922 | 0.889 | 1.000 |
+| protocol | 3 | 0.111 | 0.811 | 0.750 | 1.000 |
+| spec | 3 | 0.889 | 0.907 | 0.722 | 1.000 |
+| wiring-power | 3 | 0.806 | 1.000 | 1.000 | 1.000 |
+| overall | 17 | 0.734 | 0.903 | 0.825 | 1.000 |

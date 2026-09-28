@@ -1,11 +1,13 @@
 """FastAPI application: /healthz, /metrics, the agent routes, the cost receipt, feedback,
-search and documents."""
+search and documents, and the web app's static build at /."""
 
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from functools import partial
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
@@ -25,6 +27,9 @@ from bas_assistant.settings import Settings
 
 Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 
+# Built into the image by the Dockerfile's web stage; absent in unit tests and a bare checkout.
+WEB_DIST = Path("web/dist")
+
 
 class Health(BaseModel):
     """Response model for GET /healthz."""
@@ -37,7 +42,7 @@ def healthz() -> Health:
     return Health(status="ok")
 
 
-def create_app(lifespan: Lifespan) -> FastAPI:
+def create_app(lifespan: Lifespan, web_dist: Path = WEB_DIST) -> FastAPI:
     app = FastAPI(title="bas-assistant", docs_url="/docs", redoc_url=None, lifespan=lifespan)
     app.add_api_route("/healthz", healthz, methods=["GET"], response_model=Health)
     app.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
@@ -56,6 +61,10 @@ def create_app(lifespan: Lifespan) -> FastAPI:
         exclude_spans=["send", "receive"],
         server_request_hook=drop_client_details,
     )
+    # Mounted last, so every API route above matches first. The UI routes by URL hash, so no
+    # page path can shadow an API path; this serves index.html, /assets and /img.
+    if web_dist.is_dir():
+        app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
     return app
 
 

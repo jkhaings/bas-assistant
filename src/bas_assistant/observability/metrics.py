@@ -74,7 +74,10 @@ async def count_http_requests(
         # Unhandled errors become a 500 outside this middleware; count them here.
         HTTP_REQUESTS.labels(request.method, _route(request), "500").inc()
         raise
-    HTTP_REQUESTS.labels(request.method, _route(request), str(response.status_code)).inc()
+    # The web app's static files and unknown paths match no API route; counted, they would
+    # dilute the 5xx share the error-rate alert reads.
+    if request.scope.get("route") is not None:
+        HTTP_REQUESTS.labels(request.method, _route(request), str(response.status_code)).inc()
     return response
 
 

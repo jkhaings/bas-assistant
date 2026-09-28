@@ -12,6 +12,7 @@ from redis import Redis
 from sqlalchemy import Engine, func, select
 
 from bas_assistant.db.activity import Usage
+from bas_assistant.db.corpus import current_corpus_version
 from bas_assistant.db.engine import get_engine
 from bas_assistant.evals.runs import record_run
 from bas_assistant.settings import Settings
@@ -61,4 +62,5 @@ def pytest_sessionfinish() -> None:
         "total": len(_OUTCOMES),
         "cases": dict(_OUTCOMES),
     }
-    record_run(engine, "redteam", Settings().corpus_version, scores, Decimal(spent))
+    version = current_corpus_version(engine, Settings().corpus_version)
+    record_run(engine, "redteam", version, scores, Decimal(spent))

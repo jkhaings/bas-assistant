@@ -27,7 +27,9 @@ class Settings(BaseSettings):
         extra="ignore",  # ignore unrecognised env vars
     )
 
-    # TODO(session E): only the LiteLLM container needs vendor keys; split the env files.
+    # TODO(post-weekend): only the LiteLLM container needs vendor keys; the app never reads
+    # these, so drop them here and give the app, migrate and Postgres their own variables instead
+    # of the whole env file (docker-compose.prod.yml; HANDOFF_E.md, Known gaps).
     openai_api_key: SecretStr
     anthropic_api_key: SecretStr
     gemini_api_key: SecretStr
@@ -47,10 +49,9 @@ class Settings(BaseSettings):
     # Per IP per minute. Every visitor of a role shares its demo user, so this is the
     # per-visitor control on the public link.
     ip_rate_limit: int = 20
-    # Part of the answer-cache key: bump when the corpus or the retrieval over it changes, so
-    # no stale answer survives ("2": the session D reranker).
-    # TODO(session E): a first ingest does not bump it, so abstains cached while the corpus was
-    # empty are served for their 24 h TTL; ingest before the link opens, or flush answer:*.
+    # The retrieval part of the answer-cache version: bump it when the retrieval over the corpus
+    # changes ("2": the session D reranker). The corpus part comes from the documents table on
+    # every question (db/corpus.current_corpus_version), so an ingest needs no bump.
     corpus_version: str = "2"
     redis_url: str = "redis://redis:6379/0"
     litellm_base_url: str = "http://litellm:4000"
@@ -77,6 +78,8 @@ class Settings(BaseSettings):
     # answerable rows' top score 0.988-1.000, must-abstain rows 0.00-0.944 (row 19 as support).
     # 0.96 makes every must-abstain row abstain before any answer call; the margins are narrow
     # (0.016 and 0.028), so re-check it whenever the corpus or the reranker changes.
+    # TODO(post-weekend): a fault report that retrieves nothing above it abstains before the
+    # answer model, so no ticket can be drafted for it (HANDOFF_E.md, Known gaps).
     rerank_threshold: float = 0.96
 
     @property

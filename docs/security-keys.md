@@ -8,15 +8,19 @@
 | `ANTHROPIC_API_KEY` | same | same | console.anthropic.com |
 | `GEMINI_API_KEY` | same | same | aistudio.google.com |
 | `ADMIN_TOKEN` | same | same | generated locally |
-| `LANGFUSE_PUBLIC_KEY` | same | same | Langfuse dashboard |
-| `LANGFUSE_SECRET_KEY` | same | same | Langfuse dashboard |
-| `GRAFANA_ADMIN_PASSWORD` | same | same | generated locally |
-| `POSTGRES_PASSWORD` | same | same | generated locally (`openssl rand -hex 16`) |
+| `LANGFUSE_PUBLIC_KEY` | same | not set (Langfuse is not on the droplet) | Langfuse dashboard |
+| `LANGFUSE_SECRET_KEY` | same | not set | Langfuse dashboard |
+| `GRAFANA_ADMIN_PASSWORD` | same | same | generated (`openssl rand -hex 24`) |
+| `GRAFANA_DB_PASSWORD` | same | same | generated |
+| `POSTGRES_PASSWORD` | same | same | generated |
+| `LITELLM_MASTER_KEY`, `LITELLM_API_KEY`, `LITELLM_SERVICE_KEY` | same | same | generated |
 
-The droplet file `/etc/bas-assistant.env` is owned by root, mode 600.
-Docker Compose reads it via `env_file: ${HOME}/.bas-assistant.env` (dev)
-or the same path in prod; no key ever appears in a `docker-compose.yml` literal
-or a `Dockerfile` ENV/ARG.
+The droplet file `/etc/bas-assistant.env` is owned by root, mode 600. `deploy/setup_server.sh`
+generates every value except the three vendor keys, which a person pastes with nano; the prod
+values differ from the laptop's. `/opt/bas-assistant/.env` and `/root/.bas-assistant.env` are
+symlinks to it. Compose reads it via `env_file` (dev: `${HOME}/.bas-assistant.env`; prod:
+`/etc/bas-assistant.env`); Grafana gets only its two passwords, by interpolation. No key ever
+appears in a compose literal or a `Dockerfile` ENV/ARG.
 
 ## Vendor spend limits
 
@@ -37,9 +41,11 @@ as "used in tests" — it contains clearly fake values.
 
 1. Open the vendor console for the affected key and generate a new one.
 2. Update `~/.bas-assistant.env` on the laptop (nano, not echo).
-3. SSH to the droplet; `sudo nano /etc/bas-assistant.env`; paste the new value.
-4. `docker compose restart app` on the droplet.
-5. Verify with `make preflight` on the droplet.
+3. SSH to the droplet; `nano /etc/bas-assistant.env`; paste the new value.
+4. On the droplet, in `/opt/bas-assistant`: `docker compose up -d --force-recreate litellm app`.
+   `restart` would keep the old environment; the vendor keys are read by LiteLLM, the others by
+   the app.
+5. Verify: `curl -s https://bas.jasonkhaings.com/healthz`, then ask one question in the UI.
 6. Revoke the old key in the vendor console.
 
 Total time: ~5 minutes if the vendor console is open.

@@ -155,12 +155,12 @@ class FakeRetriever:
 
 
 @asynccontextmanager
-async def _no_startup(_app: FastAPI) -> AsyncGenerator[None]:
+async def no_startup(_app: FastAPI) -> AsyncGenerator[None]:
     yield
 
 
 def make_client(runtime: AppRuntime) -> TestClient:
-    app = create_app(_no_startup)
+    app = create_app(no_startup)
     app.state.runtime = runtime
     return TestClient(app)
 

@@ -1,0 +1,34 @@
+# The public entry point. DNS is a Route 53 A record with no proxy in front, so Caddy obtains
+# and renews the Let's Encrypt certificate for {$DOMAIN} itself.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		# Only this site may frame its pages (the Dashboards tab frames /grafana); no other site
+		# can frame the Approvals tab.
+		Content-Security-Policy "frame-ancestors 'self'"
+		-Server
+	}
+
+	# Prometheus scrapes the app on the compose network; the raw counters, the app's and
+	# Grafana's own, stay off the link.
+	handle /metrics* {
+		respond 404
+	}
+	handle /grafana/metrics* {
+		respond 404
+	}
+
+	# Grafana serves from the /grafana sub-path itself, so the prefix is passed through.
+	handle /grafana* {
+		reverse_proxy grafana:3000
+	}
+
+	# The API and the web app. Caddy flushes text/event-stream responses as they arrive.
+	handle {
+		reverse_proxy app:8000
+	}
+}
