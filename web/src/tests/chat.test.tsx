@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
 import { App } from "../App";
+import type { AskResponse } from "../api/types";
 import { json, noContent, sse, sseEvent, stubApi } from "./fakeApi";
 import { ANSWER, RECEIPT, REQUEST_ID, shellRoutes } from "./fixtures";
 
@@ -197,25 +198,78 @@ test("flagging an answer sends the trimmed reason and shows it flagged", async (
     expect(flag?.body).toEqual({ reason: "Wrong page" });
 });
 
-test("a paused answer shows the proposed ticket and points to the Approvals tab", async () => {
-    const paused = {
-        ...ANSWER,
-        decision: "paused" as const,
-        approval_required: true,
-        ticket_id: "f70ea70e-95e5-47ac-9906-2265a87aac31",
-    };
+const TICKET_QUESTION = "The eBM-800 will not power up, please open a ticket.";
+
+function answerWith(response: AskResponse) {
     stubApi([
         ...shellRoutes(),
-        { method: "POST", path: "/ask/stream", respond: () => sse(sseEvent("answer", paused)) },
+        { method: "POST", path: "/ask/stream", respond: () => sse(sseEvent("answer", response)) },
+    ]);
+    render(<App />);
+}
+
+const PAUSED: AskResponse = {
+    ...ANSWER,
+    decision: "paused",
+    approval_required: true,
+    ticket_id: "f70ea70e-95e5-47ac-9906-2265a87aac31",
+};
+
+test("a turn that drafts a ticket shows the answer flagged for follow-up, no ticket controls", async () => {
+    answerWith(PAUSED);
+
+    await ask(TICKET_QUESTION);
+
+    expect(await screen.findByText("Flagged for follow-up")).toBeInTheDocument();
+    expect(screen.getByText(ANSWER.answer)).toBeInTheDocument();
+    expect(screen.getByText("answered")).toBeInTheDocument();
+    expect(screen.queryByText("paused")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ticket proposed/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /approvals/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+});
+
+test("the chat's path leaves out the ticket steps", async () => {
+    const path = ["screen", "route", "retrieve", "answer", "validate", "propose_ticket"];
+    stubApi([
+        ...shellRoutes(),
+        {
+            method: "POST",
+            path: "/ask/stream",
+            respond: () =>
+                sse(...path.map((node) => sseEvent("node", { node })), sseEvent("answer", PAUSED)),
+        },
     ]);
     render(<App />);
 
-    await ask("The eBM-800 will not power up, please open a ticket.");
+    await ask(TICKET_QUESTION);
 
-    const callout = (await screen.findByText(/Ticket proposed/)).closest("p");
-    expect(callout).toHaveTextContent("f70ea70e-95e5-47ac-9906-2265a87aac31");
-    expect(within(callout as HTMLElement).getByRole("link", { name: "Approvals tab" })).toHaveAttribute(
-        "href",
-        "#/approvals",
-    );
+    await screen.findByText("Flagged for follow-up");
+    const steps = within(screen.getByRole("list", { name: "Graph steps" }));
+    expect(
+        steps.getAllByRole("listitem").map((item) => item.textContent?.replace("→", "")),
+    ).toEqual(["screen", "route", "retrieve", "answer", "validate"]);
+});
+
+test("a drafted ticket with no citation shows as abstained", async () => {
+    answerWith({
+        ...PAUSED,
+        answer: "The documentation does not cover this, so I drafted a ticket for an admin to review.",
+        citations: [],
+    });
+
+    await ask(TICKET_QUESTION);
+
+    expect(await screen.findByText("Flagged for follow-up")).toBeInTheDocument();
+    expect(screen.getByText("abstained")).toBeInTheDocument();
+});
+
+test("a ticket suggested to a role that cannot file one is flagged, not explained", async () => {
+    const note = "A ticket was suggested, but this role cannot create tickets.";
+    answerWith({ ...ANSWER, notes: [note] });
+
+    await ask(TICKET_QUESTION);
+
+    expect(await screen.findByText("Flagged for follow-up")).toBeInTheDocument();
+    expect(screen.queryByText(note)).not.toBeInTheDocument();
 });

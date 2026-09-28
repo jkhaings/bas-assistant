@@ -31,8 +31,8 @@ function ticketRoutes() {
     ];
 }
 
-async function openApprovalsAsAdmin(token: string) {
-    window.location.hash = "#/approvals";
+async function openAdminPageAsAdmin(token: string) {
+    window.location.hash = "#/admin";
     render(<App />);
     const user = userEvent.setup();
     await user.selectOptions(screen.getByLabelText("View as:"), "admin");
@@ -43,7 +43,7 @@ async function openApprovalsAsAdmin(token: string) {
 
 test("an admin with a token approves a proposed ticket and sees it filed", async () => {
     const calls = stubApi(ticketRoutes());
-    const user = await openApprovalsAsAdmin(TOKEN);
+    const user = await openAdminPageAsAdmin(TOKEN);
 
     expect(await screen.findByText(PROPOSED_TICKET.draft.title)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Approve" }));
@@ -57,7 +57,7 @@ test("an admin with a token approves a proposed ticket and sees it filed", async
 
 test("a rejected token is cleared and the admin is asked again", async () => {
     stubApi(ticketRoutes());
-    await openApprovalsAsAdmin("wrong-token");
+    await openAdminPageAsAdmin("wrong-token");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("That token was rejected.");
     expect(screen.getByLabelText("Admin token")).toHaveValue("");
@@ -65,7 +65,7 @@ test("a rejected token is cleared and the admin is asked again", async () => {
 
 test("roles other than admin are told to switch", async () => {
     stubApi(shellRoutes());
-    window.location.hash = "#/approvals";
+    window.location.hash = "#/admin";
     render(<App />);
 
     expect(await screen.findByText("Switch to Admin to review tickets.")).toBeInTheDocument();

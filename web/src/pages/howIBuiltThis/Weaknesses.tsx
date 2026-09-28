@@ -14,8 +14,8 @@ export function Weaknesses() {
                     an answer is about {RUN.p95Seconds} seconds.
                 </li>
                 <li>
-                    With no login, everyone who picks a role shares that role's daily allowance
-                    of 50 questions. The per-visitor control is the rate limit.
+                    With no login, visitors ask as support by default and share that role's
+                    daily allowance of 50 questions. The per-visitor control is the rate limit.
                 </li>
                 <li>
                     The name detector is a small model: it misses some names and most bare city

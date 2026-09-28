@@ -1,18 +1,15 @@
-import type { Budget, Role } from "../api/types";
+import type { Budget } from "../api/types";
 import type { Page } from "../hooks/useHashRoute";
 import { NavTabs } from "./NavTabs";
-import { RoleSelect } from "./RoleSelect";
 import { BudgetChip, DocumentsChip } from "./StatusChips";
 
 type Props = {
     page: Page;
-    role: Role;
-    onRoleChange: (role: Role) => void;
     budget: Budget | null;
     documentCount: number | null;
 };
 
-export function TopBar({ page, role, onRoleChange, budget, documentCount }: Props) {
+export function TopBar({ page, budget, documentCount }: Props) {
     return (
         <header className="border-b border-stone-200 bg-white">
             <div className="mx-auto max-w-6xl px-4 sm:px-6">
@@ -26,9 +23,6 @@ export function TopBar({ page, role, onRoleChange, budget, documentCount }: Prop
                     <div className="flex flex-wrap items-center gap-2">
                         <BudgetChip budget={budget} />
                         <DocumentsChip count={documentCount} />
-                    </div>
-                    <div className="sm:ml-auto">
-                        <RoleSelect role={role} onChange={onRoleChange} />
                     </div>
                 </div>
                 <NavTabs current={page} />

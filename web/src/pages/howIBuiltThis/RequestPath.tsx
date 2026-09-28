@@ -29,6 +29,8 @@ export function RequestPath() {
         <Section id="request-path" title="The request path and the four fences">
             <p>What happens between pressing Ask and seeing a cited answer:</p>
             <Steps items={REQUEST_STEPS} />
+            {/* TODO(post-weekend): recapture this and docs/img/live-chat.png without the role
+                switcher and Approvals tab (HANDOFF_ui-simple.md, Known gaps). */}
             <Figure
                 src="/img/chat-answer.png"
                 alt="A live answer: the node path, the answer, the Red5-PLUS-1180 citation card, feedback buttons and the cost receipt"

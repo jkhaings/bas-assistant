@@ -6,7 +6,7 @@ Deferred until after the technical round: Slack, n8n, MCP server, Jira, Prefect 
 
 Two interfaces: the web app (product demo; "How I built this" page added last) and Grafana (Budget dashboard, Quality & adoption dashboard). Everything else is a channel into the API.
 
-Deployment decision (Sep 26): public demo link, no login. Hosted with Docker Compose on a DigitalOcean droplet behind Caddy (auto-TLS), Route 53 DNS on the jasonkhaings.com subdomain `bas.` (an A record with no proxy; Cloudflare was the original plan). Roles are a demo switcher in the UI ("View as: Support / Engineer / Admin"); the Approve action alone requires a shared admin token. OIDC/JWT/Entra and Azure/Terraform move to an optional stretch session. Public exposure makes abuse controls load-bearing: per-IP rate limit, global daily USD cap that pauses the demo with a friendly message, vendor-side hard spend limits, cache.
+Deployment decision (Sep 26): public demo link, no login. Hosted with Docker Compose on a DigitalOcean droplet behind Caddy (auto-TLS), Route 53 DNS on the jasonkhaings.com subdomain `bas.` (an A record with no proxy; Cloudflare was the original plan). Roles are a demo switcher in the UI ("View as: Support / Engineer / Admin", on the unlinked `#/admin` page since Sep 27; visitors start as support); the Approve action alone requires a shared admin token. OIDC/JWT/Entra and Azure/Terraform move to an optional stretch session. Public exposure makes abuse controls load-bearing: per-IP rate limit, global daily USD cap that pauses the demo with a friendly message, vendor-side hard spend limits, cache.
 
 This file becomes `docs/ARCHITECTURE.md` in the repo. Keep it current-state truthful as things ship.
 
@@ -29,7 +29,7 @@ This file becomes `docs/ARCHITECTURE.md` in the repo. Keep it current-state trut
 
 An internal assistant for a building-automation company's support and sales desks. A person asks a product question in Slack or the web app; the assistant finds the exact passages in the company's own documentation, writes a short answer from only those passages, shows the document and page, and says "I don't know" when the docs don't cover it. It can draft a support ticket, but a human approves before anything is filed.
 
-Users and roles (in the demo, chosen with a "View as" switcher; in production, from SSO):
+Users and roles (in the demo, support by default and switchable with "View as" on the unlinked `#/admin` page; in production, from SSO):
 - **support**: asks questions, sees public-tier documents, cannot create tickets.
 - **engineer**: everything support can, plus engineer-tier documents, can propose tickets.
 - **admin**: everything, approves tickets (requires the admin token in the demo), sees the dashboards.
@@ -463,7 +463,7 @@ The RAGAS-faithfulness proxy on sampled production answers is not built.
 
 Two interfaces people look at:
 
-1. **The product (web app)**: React + TypeScript. No login (role switcher), threads, streaming answers, citation cards, feedback buttons, a "Show cost" receipt on every answer (route, model, tokens, cost, timings, cache hit), approvals page for admins, and a Dashboards tab that embeds the two Grafana dashboards same-origin. This is the demo, with a "How I built this" page.
+1. **The product (web app)**: React + TypeScript. No login (every visitor asks as support; a role switcher on the unlinked `#/admin` page), threads, streaming answers, citation cards, feedback buttons, a "Show cost" receipt on every answer (route, model, tokens, cost, timings, cache hit), approvals for admins on `#/admin`, and a Dashboards tab that embeds the two Grafana dashboards same-origin. This is the demo, with a "How I built this" page.
 
    **As built (session E)**, `web/`:
    - **Stack**: Vite, React 19, strict TypeScript and Tailwind v4 (ADR 0002). The typed client
@@ -473,13 +473,11 @@ Two interfaces people look at:
      (`main.create_app`), and the Dockerfile's `web` stage builds it into the image.
      - The API stays at root paths, not under `/api` as SESSIONS.md planned. The generated client's
        paths then match the schema 1:1.
-     - The UI routes by URL hash (`#/chat`, `#/approvals`, `#/dashboards`, `#/evals`,
-       `#/how-i-built-this`), so no page path can collide with an API path.
+     - The UI routes by URL hash (`#/chat`, `#/dashboards`, `#/evals`, `#/how-i-built-this`,
+       and `#/admin`, which has no tab and is reached only by its URL), so no page path can
+       collide with an API path.
      - The Vite dev server proxies the API paths to :8000 and `/grafana` to :3000.
    - **Top bar**:
-     - The "View as" select sends `X-Demo-Role` on every request, with the note "roles come from
-       SSO in production". Each role keeps its own threads, since the API 404s another role's
-       thread.
      - A budget chip from `GET /budget`, polled every 30 s and after each answer.
      - The count of documents the role can see (`GET /documents`).
      - A banner whenever any call returns 503 `daily_budget_reached`.
@@ -489,12 +487,23 @@ Two interfaces people look at:
        rendered markdown or HTML.
      - Citation cards: document, page and link; PDF links open at `#page=N`.
      - A three-way feedback control, flag-with-reason, and "Show cost", which fetches the receipt.
-     - A paused turn shows the ticket waiting for an admin.
+     - A turn paused at the gate (`approval_required`), or one carrying the graph's no-ticket
+       note, shows the answer as usual with one quiet line, "Flagged for follow-up", and no
+       ticket controls; the note itself is not shown. A paused turn's badge reads answered when
+       it cites a passage and abstained when it does not, as the graph closes it after the gate.
+       The node path leaves out `propose_ticket`, `human_gate` and `act`. An unanswerable
+       paused turn (engineer or admin only) still shows the graph's own text, which says a
+       ticket was drafted.
      - Limit errors show the API's own message; HTTP errors arrive wrapped in `detail`, the SSE
        `error` event bare.
-   - **Approvals**: admin only. The admin token is asked once and kept in React state, never in
-     browser storage. It lists `GET /tickets` and sends approve or deny through `POST /approve`;
-     a 401 clears the token.
+   - **Admin** (`#/admin`, not linked):
+     - The "View as" select sends `X-Demo-Role` on every request, with the note "roles come from
+       SSO in production". The role is app-wide state, so a role picked here applies to Chat;
+       every visitor starts as support. Each role keeps its own threads, since the API 404s
+       another role's thread.
+     - Approvals, admin only. The admin token is asked once and kept in React state, never in
+       browser storage. It lists `GET /tickets` and sends approve or deny through
+       `POST /approve`; a 401 clears the token.
    - **Dashboards**: both Grafana dashboards in same-origin iframes (`/grafana/d/…?kiosk`).
    - **Evals**: golden pass rate, RAGAS by category and red-team cases from `GET /evals/latest`,
      with a plain-words paragraph per metric.
@@ -502,9 +511,10 @@ Two interfaces people look at:
    - **Tests**: Vitest and Testing Library with a stubbed `fetch`, covering:
      - chat streaming and citations;
      - a follow-up thread and the stream's error events;
-     - the paused-ticket callout;
+     - the "Flagged for follow-up" line in place of any ticket controls;
      - the receipt, feedback votes and flags;
-     - the role switch, the approval flow and the budget banner;
+     - a main screen with no role switcher, admin token or Approvals tab; the role switch and
+       the approval flow on `#/admin`; the budget banner;
      - the Evals page's score shapes and low-score marker, and the Dashboards iframes;
      - error text.
 

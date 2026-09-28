@@ -1,6 +1,6 @@
 # bas-assistant
 
-**Live demo: https://bas.jasonkhaings.com** (no login; pick a role with "View as").
+**Live demo: https://bas.jasonkhaings.com** (no login; you ask as support).
 
 An internal support assistant for a building-automation company. Staff ask product questions;
 the assistant answers only from ingested public documentation (Delta Controls catalog sheets and
@@ -28,7 +28,9 @@ of record is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Permission-filtered.** Roles map to document access groups in the SQL itself. Two documents
   are engineer-only.
 - **Human gate.** An engineer's question can draft a ticket. The LangGraph run pauses on an
-  interrupt, checkpointed to Postgres, until an admin approves it with the admin token.
+  interrupt, checkpointed to Postgres, until an admin approves it with the admin token. The public
+  chat shows only "Flagged for follow-up"; the role switcher, admin token and approve buttons are
+  on `#/admin`, which is not linked from the app.
 - **Cost-metered and capped.**
   - Every model call goes through LiteLLM aliases (`fast`, `strong`, `embed`) and is written as a
     usage row with its USD. "Show cost" under each answer is the receipt.
@@ -125,8 +127,8 @@ cd web && npm ci && npm run dev
   model sees does. Capping each document at two of the five passages changed nothing, so it was
   reverted.
 - **Latency.** The reranker runs on the droplet's two CPUs.
-- **One allowance per role.** With no login, every visitor who picks a role shares that role's
-  50 questions a day. The per-IP rate limit is the per-visitor control.
+- **One allowance per role.** With no login, visitors ask as support by default and share that
+  role's 50 questions a day. The per-IP rate limit is the per-visitor control.
 - **A small NER model** (`en_core_web_sm`) misses some names and most bare city names.
 - **A narrow corpus.** Catalog sheets and product pages only: no manuals, no help center.
 - **Prompt caching is inactive**: the system prompt is under the provider's minimum length.
