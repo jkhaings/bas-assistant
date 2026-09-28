@@ -7,6 +7,8 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 COPY web/ ./
+# How I built this imports the golden set from ../eval, the same layout as the repo.
+COPY eval/golden.jsonl /eval/golden.jsonl
 RUN npm run build
 
 # --- build stage ---

@@ -1,4 +1,5 @@
 import { Figure } from "../../components/Figure";
+import { Evaluations } from "./Evaluations";
 import { RUN } from "./run";
 import { Part, Section, Tools } from "./Section";
 
@@ -41,28 +42,6 @@ function Security() {
             <Tools
                 names="Postgres, pydantic-settings, gitleaks, Caddy for HTTPS"
                 code="src/bas_assistant/api/roles.py"
-            />
-        </Section>
-    );
-}
-
-function Evaluations() {
-    return (
-        <Section id="evaluations" title="Evaluations">
-            <p>
-                Before I wrote any search code, I wrote twenty questions a support desk gets, each
-                with the document and page that answers it. This golden set is a fixed test I rerun
-                after each change, and the live site passed every check. RAGAS, a library that
-                uses a second model as a judge, rates faithfulness, the share of an answer's claims
-                its sections support, at {RUN.faithfulness} overall. A red team, a set of
-                deliberate attacks such as instructions hidden inside a document, ran{" "}
-                {RUN.redteamCases} cases, and all {RUN.redteamCases} were stopped. Staff can rate
-                each answer used as-is, with edits or not used; the demo hides those buttons,
-                since its visitors aren't staff.
-            </p>
-            <Tools
-                names="pytest, RAGAS with gpt-4o-mini as the judge"
-                page={{ href: "#/evals", label: "Evals" }}
             />
         </Section>
     );

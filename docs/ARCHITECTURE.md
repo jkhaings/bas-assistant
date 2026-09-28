@@ -512,7 +512,10 @@ Two interfaces people look at:
      written from the live run's numbers. Three steps (before a question, a question arrives,
      around all of it) hold nine short sections, each ending with a "Tools:" line and one link
      into the app or the repo, then four known problems. The numbers are in
-     `web/src/pages/howIBuiltThis/run.ts`.
+     `web/src/pages/howIBuiltThis/run.ts`. Evaluations shows every golden case in a table read
+     at build time from `eval/golden.jsonl` (`?raw` import). So the Dockerfile's web stage copies
+     that one file to `/eval`, `.dockerignore` re-includes it, and the Vite dev server allows
+     `../eval`. On a phone each row stacks into a labelled card.
    - **Tests**: Vitest and Testing Library with a stubbed `fetch`, covering:
      - chat streaming and citations;
      - a follow-up thread and the stream's error events;
@@ -521,7 +524,8 @@ Two interfaces people look at:
      - a main screen with no role switcher, admin token or Approvals tab; the role switch and
        the approval flow on `#/admin`; the budget banner;
      - the Evals page's score shapes and low-score marker, and the Dashboards iframes;
-     - the How I built this headings in order, a "Tools:" line closing each section, and no "we";
+     - the How I built this headings in order, a "Tools:" line closing each section, no "we",
+       and one golden-table row per line of `eval/golden.jsonl`;
      - error text.
 
      CI runs `npm test` and `npm run build`. There is no browser end-to-end test.

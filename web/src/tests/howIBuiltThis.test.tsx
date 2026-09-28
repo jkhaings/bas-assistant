@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { expect, test } from "vitest";
+import goldenJsonl from "../../../eval/golden.jsonl?raw";
 import { HowIBuiltThis } from "../pages/HowIBuiltThis";
 
 function headings(level: number): (string | null)[] {
@@ -45,4 +46,13 @@ test("the page is written in the first person, never as we", () => {
     const text = screen.getByRole("article").textContent ?? "";
     expect(text).toMatch(/\bI\b/);
     expect(text).not.toMatch(/\b(we|our|us)\b/i);
+});
+
+test("the golden table has one row per case in eval/golden.jsonl", () => {
+    const fileRows = goldenJsonl.split("\n").filter((line) => line.trim()).length;
+    render(<HowIBuiltThis />);
+
+    const table = screen.getByRole("table", { name: /golden cases/ });
+    expect(fileRows).toBeGreaterThan(0);
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(fileRows);
 });
