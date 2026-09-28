@@ -29,3 +29,5 @@ outputs/
 tests/
 docs/
 eval/
+# the web build renders the golden set (Dockerfile web stage)
+!eval/golden.jsonl
