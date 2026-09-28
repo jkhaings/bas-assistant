@@ -9,7 +9,6 @@ export type Receipt = Schemas["Receipt"];
 export type Ticket = Schemas["TicketOut"];
 export type Budget = Schemas["BudgetOut"];
 export type EvalRun = Schemas["EvalRunOut"];
-export type FeedbackValue = Schemas["FeedbackBody"]["value"];
 
 export const ROLES = ["support", "engineer", "admin"] as const;
 export type Role = (typeof ROLES)[number];

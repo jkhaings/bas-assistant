@@ -1,7 +1,6 @@
 import { Cost } from "./howIBuiltThis/Cost";
 import { Evals } from "./howIBuiltThis/Evals";
 import { InsideACompany } from "./howIBuiltThis/InsideACompany";
-import { LangGraph } from "./howIBuiltThis/LangGraph";
 import { Problem } from "./howIBuiltThis/Problem";
 import { RequestPath } from "./howIBuiltThis/RequestPath";
 import { TwentyQuestions } from "./howIBuiltThis/TwentyQuestions";
@@ -23,7 +22,6 @@ export function HowIBuiltThis() {
             <Problem />
             <TwentyQuestions />
             <RequestPath />
-            <LangGraph />
             <Cost />
             <Evals />
             <InsideACompany />

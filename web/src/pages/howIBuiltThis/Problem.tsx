@@ -18,8 +18,11 @@ export function Problem() {
             </p>
             <p>
                 Two numbers decide whether it helps. How often is an answer used without edits,
-                and how often does it sound right but turn out wrong? Every answer carries the
-                buttons that measure both, and the Dashboards tab shows them.
+                and how often does it sound right but turn out wrong? Every answer carries a
+                "Flag as wrong" button for the second, and the Dashboards tab shows both. In a
+                real deployment the support team rates each answer used as-is, used with edits
+                or not used, and that is where the adoption number comes from; this public demo
+                hides those buttons because its visitors are not the support team.
             </p>
         </Section>
     );
