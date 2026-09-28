@@ -75,13 +75,10 @@ function Orchestration() {
                 the graph pauses and saves its state in Postgres until an admin approves or denies
                 it.
             </p>
-            {/* TODO(post-weekend): recapture this and docs/img/live-chat.png without the role
-                switcher, Approvals tab and feedback buttons (HANDOFF_ui-simple.md and
-                HANDOFF_ui-no-feedback.md, Known gaps). */}
             <Figure
                 src="/img/chat-answer.png"
-                alt="A live answer: the node path, the answer, the Red5-PLUS-1180 citation card, feedback buttons and the cost receipt"
-                caption="A live answer, its source, and its receipt: three model calls, $0.00035."
+                alt="A live answer: the node path, the answer, two Red5-PLUS-1180 citation cards (pages 1 and 2) and the cost receipt"
+                caption="A live answer, its two sources, and its receipt: three model calls, $0.00035."
             />
             <Tools
                 names="LangGraph with its Postgres checkpointer, FastAPI streaming each finished step to the page"

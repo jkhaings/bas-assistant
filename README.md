@@ -8,12 +8,11 @@ product pages), cites the document and page, abstains when the documents don't c
 propose an internal ticket that a human approves. Everything is permission-filtered, cost-metered,
 evaluated, and audited.
 
-Built as a portfolio project. Not affiliated with Delta Controls. All copyrights or whatever rights belong
-to Delta Controls, please don't sue me LOL.
-The corpus is Delta Controls' public catalog sheets and product pages; this project is not affiliated
-with Delta Controls, and any content will be removed on request.
+Built as a portfolio project. The corpus is Delta Controls' public catalog sheets and product
+pages; this project is not affiliated with Delta Controls, and any content will be removed on
+request.
 
-![A live answer: the node path, the answer, its citation card, feedback buttons and the cost receipt](docs/img/live-chat.png)
+![A live answer: the node path, the answer, two Red5-PLUS-1180 citation cards (pages 1 and 2) and the cost receipt with three model calls](docs/img/live-chat.png)
 
 The web app has a "How I built this" page that walks through the design in plain words. The design
 of record is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
