@@ -8,7 +8,7 @@
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
 		# Only this site may frame its pages (the Dashboards tab frames /grafana); no other site
-		# can frame the Approvals tab.
+		# can frame the admin page.
 		Content-Security-Policy "frame-ancestors 'self'"
 		-Server
 	}

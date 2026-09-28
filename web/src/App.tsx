@@ -8,16 +8,18 @@ import { TopBar } from "./components/TopBar";
 import { useBudgetedClient } from "./hooks/useBudgetedClient";
 import { useDocumentCount } from "./hooks/useDocumentCount";
 import { useHashRoute, type Page } from "./hooks/useHashRoute";
-import { ApprovalsPage } from "./pages/ApprovalsPage";
+import { AdminPage } from "./pages/AdminPage";
 import { ChatPage } from "./pages/ChatPage";
 import { DashboardsPage } from "./pages/DashboardsPage";
 import { EvalsPage } from "./pages/EvalsPage";
 import { HowIBuiltThis } from "./pages/HowIBuiltThis";
 
-// Chat threads and the admin token live above the pages so switching tabs keeps them.
+// The role, chat threads and admin token live above the pages so switching pages keeps them,
+// and the role picked on #/admin applies to Chat.
 type CurrentPageProps = {
     page: Page;
     role: Role;
+    onRoleChange: (role: Role) => void;
     chat: ChatState;
     dispatch: Dispatch<ChatAction>;
     onAskFinished: () => void;
@@ -28,6 +30,7 @@ type CurrentPageProps = {
 function CurrentPage({
     page,
     role,
+    onRoleChange,
     chat,
     dispatch,
     onAskFinished,
@@ -44,9 +47,14 @@ function CurrentPage({
                     onAskFinished={onAskFinished}
                 />
             );
-        case "approvals":
+        case "admin":
             return (
-                <ApprovalsPage role={role} token={adminToken} onTokenChange={onAdminTokenChange} />
+                <AdminPage
+                    role={role}
+                    onRoleChange={onRoleChange}
+                    token={adminToken}
+                    onTokenChange={onAdminTokenChange}
+                />
             );
         case "dashboards":
             return <DashboardsPage />;
@@ -69,17 +77,12 @@ export function App() {
         <ApiContext.Provider value={client}>
             <div className="flex min-h-screen flex-col">
                 {budgetStop && <BudgetBanner resetsAt={budgetStop.resetsAt} />}
-                <TopBar
-                    page={page}
-                    role={role}
-                    onRoleChange={setRole}
-                    budget={budget}
-                    documentCount={documentCount}
-                />
+                <TopBar page={page} budget={budget} documentCount={documentCount} />
                 <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
                     <CurrentPage
                         page={page}
                         role={role}
+                        onRoleChange={setRole}
                         chat={chat}
                         dispatch={dispatch}
                         onAskFinished={refreshBudget}

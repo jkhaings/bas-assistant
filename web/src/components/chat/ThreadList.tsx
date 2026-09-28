@@ -45,7 +45,7 @@ export function ThreadList({ threads, activeKey, onSelect, onNew }: Props) {
                 })}
             </ul>
             <p className="text-xs text-stone-500">
-                Threads live in this tab only, one list per role.
+                Threads live in this tab only.
             </p>
         </nav>
     );

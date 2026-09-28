@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-export const PAGES = ["chat", "approvals", "dashboards", "evals", "how-i-built-this"] as const;
+export const PAGES = ["chat", "admin", "dashboards", "evals", "how-i-built-this"] as const;
 export type Page = (typeof PAGES)[number];
 
 function currentPage(): Page {

@@ -2,7 +2,6 @@ import type { Page } from "../hooks/useHashRoute";
 
 const TABS: { page: Page; label: string }[] = [
     { page: "chat", label: "Chat" },
-    { page: "approvals", label: "Approvals" },
     { page: "dashboards", label: "Dashboards" },
     { page: "evals", label: "Evals" },
     { page: "how-i-built-this", label: "How I built this" },

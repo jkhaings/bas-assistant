@@ -1,4 +1,4 @@
-import type { AskResponse, Citation } from "../../api/types";
+import type { AskResponse, Citation, Decision } from "../../api/types";
 import { CitationCard } from "./CitationCard";
 import { CostToggle } from "./CostToggle";
 import { DecisionBadge } from "./DecisionBadge";
@@ -9,17 +9,19 @@ function routeLine({ route, model }: AskResponse): string {
     return [route && `route ${route}`, model && `model ${model}`].filter(Boolean).join(" · ");
 }
 
-function TicketCallout({ ticketId }: { ticketId: string | null }) {
-    return (
-        <p className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
-            Ticket proposed (id <code className="font-mono text-xs">{ticketId ?? "pending"}</code>).
-            It waits for an admin to approve it on the{" "}
-            <a href="#/approvals" className="font-medium underline">
-                Approvals tab
-            </a>
-            .
-        </p>
-    );
+// The ticket flow stays off the chat: a gated turn shows as the graph will close it, answered
+// when it cites a passage (the validator requires one for an answer) and abstained otherwise.
+function shownDecision({ decision, citations }: AskResponse): Decision {
+    if (decision !== "paused") return decision;
+    return citations.length > 0 ? "answered" : "abstained";
+}
+
+// The graph's only note is the one for a ticket suggested to a role that cannot file it.
+// TODO(post-weekend): AskResponse has no needs_ticket flag, so this reads approval_required and
+// the notes, and an unanswerable paused turn still shows the graph's ticket wording
+// (HANDOFF_ui-simple.md, Known gaps).
+function flaggedForFollowUp({ approval_required, notes }: AskResponse): boolean {
+    return approval_required || notes.length > 0;
 }
 
 function Sources({ citations }: { citations: Citation[] }) {
@@ -41,7 +43,7 @@ export function AnswerView({ response }: { response: AskResponse }) {
     return (
         <div className="space-y-4 rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center gap-2">
-                <DecisionBadge decision={response.decision} />
+                <DecisionBadge decision={shownDecision(response)} />
                 {response.cache_hit && (
                     <span className="rounded-full border border-stone-300 bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700">
                         cached
@@ -50,13 +52,8 @@ export function AnswerView({ response }: { response: AskResponse }) {
                 <span className="text-xs text-stone-500">{routeLine(response)}</span>
             </div>
             <p className="leading-relaxed whitespace-pre-wrap text-stone-900">{response.answer}</p>
-            {response.decision === "paused" && <TicketCallout ticketId={response.ticket_id} />}
-            {response.notes.length > 0 && (
-                <ul className="list-disc space-y-1 pl-5 text-xs text-stone-600">
-                    {response.notes.map((note) => (
-                        <li key={note}>{note}</li>
-                    ))}
-                </ul>
+            {flaggedForFollowUp(response) && (
+                <p className="text-xs text-stone-500">Flagged for follow-up</p>
             )}
             {response.citations.length > 0 && <Sources citations={response.citations} />}
             <div className="space-y-3 border-t border-stone-100 pt-3">
