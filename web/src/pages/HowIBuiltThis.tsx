@@ -1,10 +1,7 @@
-import { Cost } from "./howIBuiltThis/Cost";
-import { Evals } from "./howIBuiltThis/Evals";
-import { InsideACompany } from "./howIBuiltThis/InsideACompany";
-import { Problem } from "./howIBuiltThis/Problem";
-import { RequestPath } from "./howIBuiltThis/RequestPath";
-import { TwentyQuestions } from "./howIBuiltThis/TwentyQuestions";
-import { Weaknesses } from "./howIBuiltThis/Weaknesses";
+import { AQuestionArrives } from "./howIBuiltThis/AQuestionArrives";
+import { AroundItAll } from "./howIBuiltThis/AroundItAll";
+import { BeforeAQuestion } from "./howIBuiltThis/BeforeAQuestion";
+import { KnownProblems } from "./howIBuiltThis/KnownProblems";
 
 export function HowIBuiltThis() {
     return (
@@ -14,18 +11,16 @@ export function HowIBuiltThis() {
                     How I built this
                 </h1>
                 <p className="text-lg text-stone-600">
-                    A support assistant that answers only from public product documentation, cites
-                    the page, abstains when the documents are silent, and never files a ticket
-                    without a person saying yes.
+                    I built a support assistant for a building-automation company's help desk. It
+                    answers product questions only from the company's public documents, shows the
+                    page it used, and says so when the documents don't cover a question. This page
+                    follows the system in the order things happen.
                 </p>
             </header>
-            <Problem />
-            <TwentyQuestions />
-            <RequestPath />
-            <Cost />
-            <Evals />
-            <InsideACompany />
-            <Weaknesses />
+            <BeforeAQuestion />
+            <AQuestionArrives />
+            <AroundItAll />
+            <KnownProblems />
             <footer className="border-t border-stone-200 pt-6">
                 <p>
                     The code is on{" "}

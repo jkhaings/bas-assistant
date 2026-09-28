@@ -508,7 +508,11 @@ Two interfaces people look at:
    - **Dashboards**: both Grafana dashboards in same-origin iframes (`/grafana/d/…?kiosk`).
    - **Evals**: golden pass rate, RAGAS by category and red-team cases from `GET /evals/latest`,
      with a plain-words paragraph per metric.
-   - **How I built this**: a long-form page written from the live run's numbers.
+   - **How I built this**: a first-person walk through the pipeline in the order things happen,
+     written from the live run's numbers. Three steps (before a question, a question arrives,
+     around all of it) hold nine short sections, each ending with a "Tools:" line and one link
+     into the app or the repo, then four known problems. The numbers are in
+     `web/src/pages/howIBuiltThis/run.ts`.
    - **Tests**: Vitest and Testing Library with a stubbed `fetch`, covering:
      - chat streaming and citations;
      - a follow-up thread and the stream's error events;
@@ -517,6 +521,7 @@ Two interfaces people look at:
      - a main screen with no role switcher, admin token or Approvals tab; the role switch and
        the approval flow on `#/admin`; the budget banner;
      - the Evals page's score shapes and low-score marker, and the Dashboards iframes;
+     - the How I built this headings in order, a "Tools:" line closing each section, and no "we";
      - error text.
 
      CI runs `npm test` and `npm run build`. There is no browser end-to-end test.
