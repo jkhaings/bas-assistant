@@ -1,8 +1,8 @@
-const STARTERS = [
+export const STARTERS = [
     "How many inputs and outputs does the eZNT-T331 network thermostat have?",
     "What is the power draw of the Red5-PLUS-1180?",
     "What browsers does enteliWEB support?",
-    "What Modbus slave address does the UNOnext start from?",
+    "What enteliVAULT editions are available?",
 ];
 
 type Props = { busy: boolean; onPick: (question: string) => void };
@@ -17,7 +17,7 @@ export function StarterQuestions({ busy, onPick }: Props) {
                 Try a question
             </h2>
             <p className="mt-1 text-xs text-stone-500">
-                The last one comes from an engineer-only document, so Support gets an abstain.
+                Each one is answered from the ingested documents, with page citations.
             </p>
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
                 {STARTERS.map((question) => (
