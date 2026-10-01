@@ -1,8 +1,10 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test } from "vitest";
+import goldenJsonl from "../../../eval/golden.jsonl?raw";
 import { App } from "../App";
 import type { AskResponse } from "../api/types";
+import { STARTERS } from "../components/chat/StarterQuestions";
 import { json, noContent, sse, sseEvent, stubApi } from "./fakeApi";
 import { ANSWER, RECEIPT, REQUEST_ID, shellRoutes } from "./fixtures";
 
@@ -233,4 +235,17 @@ test("a ticket suggested to a role that cannot file one is flagged, not explaine
 
     expect(await screen.findByText("Flagged for follow-up")).toBeInTheDocument();
     expect(screen.queryByText(note)).not.toBeInTheDocument();
+});
+
+type GoldenCase = { question: string; expect: { support?: "answer" | "abstain" } };
+
+test("every starter question is a golden case that support gets an answer to", () => {
+    const answerable = goldenJsonl
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as GoldenCase)
+        .filter((golden) => golden.expect.support === "answer")
+        .map((golden) => golden.question);
+
+    expect(answerable).toEqual(expect.arrayContaining(STARTERS));
 });
