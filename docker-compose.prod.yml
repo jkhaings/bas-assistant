@@ -30,6 +30,7 @@ services:
       # right-most X-Forwarded-For entry it does not trust, so each visitor gets their own
       # per-IP limit and a forged header cannot pick one.
       FORWARDED_ALLOW_IPS: 172.30.0.0/24
+      # API_DOCS is deliberately not set: the public link does not serve /docs or /openapi.json.
     depends_on:
       migrate:
         condition: service_completed_successfully

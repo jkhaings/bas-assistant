@@ -110,7 +110,7 @@ class Usage(Base):
 
 
 class Feedback(Base):
-    """The 'used without edits' letter metric, from session D's feedback endpoint."""
+    """The 'used without edits' adoption metric, from session D's feedback endpoint."""
 
     __tablename__ = "feedback"
 
@@ -122,7 +122,7 @@ class Feedback(Base):
 
 
 class Flag(Base):
-    """The 'sounded right but wasn't' letter metric, from session D's flag endpoint."""
+    """The 'sounded right but wasn't' adoption metric, from session D's flag endpoint."""
 
     __tablename__ = "flags"
 

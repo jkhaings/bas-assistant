@@ -82,7 +82,7 @@ function Orchestration() {
             />
             <Tools
                 names="LangGraph with its Postgres checkpointer, FastAPI streaming each finished step to the page"
-                page={{ href: "#/admin", label: "#/admin" }}
+                code="src/bas_assistant/agent/graph.py"
             />
         </Section>
     );

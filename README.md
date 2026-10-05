@@ -108,7 +108,8 @@ make check-env
 make up          # docker compose up -d --build --wait (Langfuse: COMPOSE_PROFILES=langfuse make up)
 make ingest
 
-# 4. Open http://localhost:8000 (the web app) and http://localhost:3000/grafana
+# 4. Open http://localhost:8000 (the web app) and http://localhost:3000/grafana.
+#    The API docs are at http://localhost:8000/docs, on the local stack only.
 
 # 5. Tests
 make test lint                  # unit tier and linters; CI also runs npm test and npm run build in web/

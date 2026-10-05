@@ -52,7 +52,8 @@ def current_user(role: Annotated[Role, Depends(demo_role)], runtime: Runtime) ->
 
 def require_admin(runtime: Runtime, x_admin_token: Annotated[str, Header()] = "") -> None:
     expected = runtime.admin_token.get_secret_value().encode()
-    if not secrets.compare_digest(x_admin_token.encode(), expected):
+    # An empty ADMIN_TOKEN must not make a request with no token a match.
+    if not expected or not secrets.compare_digest(x_admin_token.encode(), expected):
         raise HTTPException(401, detail="admin token required")
 
 

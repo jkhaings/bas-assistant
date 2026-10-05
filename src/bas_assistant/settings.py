@@ -13,6 +13,20 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class ApiDocsSettings(BaseSettings):
+    """Whether the app serves /docs and /openapi.json.
+
+    Apart from ``Settings`` because the app object is built at import time, where unit tests
+    and ``npm run gen:api`` have no secrets, and ``Settings`` requires all of them.
+    """
+
+    model_config = SettingsConfigDict(env_file=None, secrets_dir=None, extra="ignore")
+
+    # Off unless API_DOCS is set. docker-compose.yml sets it for local development and
+    # docker-compose.prod.yml does not, so the public demo does not list its routes and headers.
+    api_docs: bool = False
+
+
 class Settings(BaseSettings):
     """Runtime configuration drawn from environment variables.
 

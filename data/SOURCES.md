@@ -32,7 +32,7 @@ robots.txt-endorsed path, used instead of reverse-engineering the "Load More" AJ
 
 ## O3 help center
 
-Deferred until after the technical round (Zendesk API requires further investigation).
+Deferred (Zendesk API requires further investigation).
 
 ## FORBIDDEN
 

@@ -20,6 +20,11 @@ in place of the role switcher. This page lists what is built (session C) and whe
 Logs are structured JSON. A regex safety net (`logging.RedactingFilter`) strips key shapes and
 email addresses from every record. No code path logs the question, the headers or the settings.
 
+The interactive API docs and the schema (`/docs`, `/openapi.json`) list every route and the admin
+header. The app serves them only where `API_DOCS` is set: `docker-compose.yml` sets it for local
+development and `docker-compose.prod.yml` does not (`tests/unit/test_api_docs.py`). The admin
+token check fails closed on an empty `ADMIN_TOKEN` (`tests/unit/test_gate.py`).
+
 ## OWASP Top 10 for LLM applications (2025)
 
 | Risk | Control here | Status |

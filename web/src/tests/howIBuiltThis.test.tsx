@@ -48,6 +48,14 @@ test("the page is written in the first person, never as we", () => {
     expect(text).not.toMatch(/\b(we|our|us)\b/i);
 });
 
+test("the page never links to the admin page", () => {
+    render(<HowIBuiltThis />);
+
+    const hrefs = screen.getAllByRole("link").map((link) => link.getAttribute("href") ?? "");
+    expect(hrefs.length).toBeGreaterThan(0);
+    expect(hrefs.filter((href) => href.includes("#/admin"))).toEqual([]);
+});
+
 test("the golden table has one row per case in eval/golden.jsonl", () => {
     const fileRows = goldenJsonl.split("\n").filter((line) => line.trim()).length;
     render(<HowIBuiltThis />);
