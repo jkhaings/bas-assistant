@@ -2,7 +2,7 @@
 
 Stack locked (Sep 26, final weekend scope): FastAPI + Pydantic v2 · Postgres 16 + pgvector + tsvector · Redis · Docling (pypdfium2 fallback — already a Docling dependency, avoids adding AGPL PyMuPDF) · LlamaIndex (ingestion) · OpenAI text-embedding-3-small · local MiniLM cross-encoder reranker (bge-reranker-base until session D, ADR 0003) · LiteLLM gateway · GPT-4o-mini → Gemini Flash (fast tier), Claude Sonnet → GPT-4o (strong tier) · LangGraph + Postgres checkpointer + `interrupt` human gate (internal ticket table, no Jira) · guardrails as code: Presidio in/out, injection rail, output validator · "View as" role switcher (no login), admin token for /approve · Langfuse (OTel) · RAGAS + pytest golden set + red-team pytest · Prometheus + Grafana (Budget; Quality & adoption; embedded in the app) · React + TypeScript (Vite) · Docker Compose on the DigitalOcean droplet, Caddy, Route 53 DNS at bas.jasonkhaings.com · GitHub Actions (one job, PR only, no LLM calls).
 
-Deferred until after the technical round: Slack, n8n, MCP server, Jira, Prefect (ingest is `make ingest`), Cohere, Ollama, promptfoo, LangSmith, k6, MkDocs, Azure/Terraform, Entra ID, Chroma, Guardrails AI library. Sections below that mention these describe the production path, not this weekend's build.
+Deferred past the weekend build: Slack, n8n, MCP server, Jira, Prefect (ingest is `make ingest`), Cohere, Ollama, promptfoo, LangSmith, k6, MkDocs, Azure/Terraform, Entra ID, Chroma, Guardrails AI library. Sections below that mention these describe the production path, not this weekend's build.
 
 Two interfaces: the web app (product demo; "How I built this" page added last) and Grafana (Budget dashboard, Quality & adoption dashboard). Everything else is a channel into the API.
 
@@ -36,7 +36,7 @@ Users and roles (in the demo, support by default and switchable with "View as" o
 
 Corpus (all public): Delta Controls catalog-sheet PDFs, product pages on deltacontrols.com, the O3 help center on Zendesk (deferred — see session A's build notes). As ingested Sep 27 2026: 112 documents (70 catalog PDFs, 42 product pages), 1459 parents, 1502 chunks, table-heavy.
 
-The twenty questions: derived from the corpus in session 1 (`data/top20_questions.md`), each with the expected source document. They are the golden set for evals and the "twenty questions" from the cover letter.
+The twenty questions: derived from the corpus in session 1 (`data/top20_questions.md`), each with the expected source document. They are the golden set for evals.
 
 Non-goals: no free chat about anything outside the corpus, no actions other than the ticket draft, no training or fine-tuning, no scraping of login-gated material.
 
@@ -54,8 +54,8 @@ Non-goals: no free chat about anything outside the corpus, no actions other than
 | requests | one row per /ask | id, thread_id, user_id, role, question_redacted, route (fast/strong), decision (retrieved/abstained today; answered/refused/paused/failed join from B/C), latency_ms, created_at |
 | request_chunks | what was retrieved | request_id, chunk_id, rank, score, used_in_answer bool |
 | usage | one row per model call | id, request_id (nullable — ingestion embeds have none), stage (router/embed/answer/judge), alias, model, provider, input_tokens, output_tokens, cached_tokens, usd, latency_ms, cache_hit bool, created_at |
-| feedback | the letter's first metric | request_id, user_id, value (used_as_is / used_with_edits / not_used), created_at |
-| flags | the letter's second metric | request_id, reviewer_id, reason, created_at |
+| feedback | the first adoption metric (§10) | request_id, user_id, value (used_as_is / used_with_edits / not_used), created_at |
+| flags | the second adoption metric (§10) | request_id, reviewer_id, reason, created_at |
 | tickets | proposed and filed tickets | id, request_id, draft jsonb, status (proposed/approved/rejected/filed), approver_id, jira_key, created_at |
 | audit | append-only log | id, request_id, actor, action, detail jsonb, created_at |
 | budgets | limits | id, scope (user/team/global), period, usd_limit, tokens_limit |
@@ -442,7 +442,7 @@ locations and tests, and the OWASP LLM Top 10 (2025) mapping.
 
 ---
 
-## 10. The two numbers from the cover letter
+## 10. The two adoption numbers
 
 - **Used without edits**: in a deployment the support team rates each answer used as-is / used with edits / not used. Stored in `feedback`. Reported as % of answered requests, weekly. The public demo hides the buttons, because its visitors are not the support team; the endpoint and the dashboard panel stay.
 - **Sounded right but wasn't**: any user can flag an answer with a reason; stored in `flags`. Automatic proxy: RAGAS faithfulness below threshold on sampled production answers. Reported as % of answered requests, weekly, with the reasons listed.
@@ -525,13 +525,13 @@ Two interfaces people look at:
        the approval flow on `#/admin`; the budget banner;
      - the Evals page's score shapes and low-score marker, and the Dashboards iframes;
      - the How I built this headings in order, a "Tools:" line closing each section, no "we",
-       and one golden-table row per line of `eval/golden.jsonl`;
+       no link to `#/admin`, and one golden-table row per line of `eval/golden.jsonl`;
      - error text.
 
      CI runs `npm test` and `npm run build`. There is no browser end-to-end test.
 2. **The dashboard (Grafana)**: two dashboards, one Grafana, embedded in the app's Dashboards tab and also reachable at /grafana. Data sources: Prometheus (live ops) and Postgres directly (business numbers).
    - **Budget**: spend today, month-to-date vs budget, cost per answer, cost by model and by stage (router / embed / answer), cost per user and per team, cache hit rate, projected month-end, budget thresholds drawn on the panels.
-   - **Quality and adoption**: weekly active users, questions per user, abstain rate, refusal rate, validation failures, p95 latency, ticket escalation rate, and the two letter numbers: used-without-edits % and flagged-wrong %.
+   - **Quality and adoption**: weekly active users, questions per user, abstain rate, refusal rate, validation failures, p95 latency, ticket escalation rate, and the two adoption numbers: used-without-edits % and flagged-wrong %.
 
    - **As built (session D)**: `deploy/grafana/dashboards/{budget,quality}.json`, provisioned read-only.
      - Budget:
@@ -542,7 +542,7 @@ Two interfaces people look at:
        - Cost per user and team; cache hit rate.
      - Quality & adoption:
        - Adoption: active users and questions per user this week; questions and active users by week.
-       - The two letter numbers: used-without-edits % and flagged %.
+       - The two adoption numbers: used-without-edits % and flagged %.
        - Tickets: escalation rate and tickets by status.
        - Latency: hourly p50/p95 rerank time against a 3 s line, and hourly p50/p95 answer latency against the 8 s line.
        - Abstain, refusal and failure rates; p95 by stage (Prometheus); validation retries and failures.
@@ -588,7 +588,9 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
     bypass ufw. Grafana gets its two passwords and its public `root_url` by interpolation, never
     the env file. Logs are capped as in dev. The network has a fixed subnet, and the app sets
     `FORWARDED_ALLOW_IPS` to it: uvicorn then keys the per-IP limit on the visitor's address from
-    Caddy's `X-Forwarded-For`, not on Caddy.
+    Caddy's `X-Forwarded-For`, not on Caddy. `API_DOCS` is not set, so the app serves no `/docs`
+    and no `/openapi.json` on the droplet; `docker-compose.yml` sets it, so both stay on for
+    local development (`settings.ApiDocsSettings`, `main.create_app`).
   - `deploy/Caddyfile`: `/metrics*` and `/grafana/metrics*` → 404, `/grafana*` → Grafana (sub-path
     kept), everything else → the app, which serves the API and the web build. HSTS, nosniff, and
     `frame-ancestors 'self'`, so only the app itself can frame its pages.

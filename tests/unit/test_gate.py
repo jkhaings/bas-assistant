@@ -1,15 +1,19 @@
 """Behaviour: a proposed ticket pauses the graph until an admin with the token decides."""
 
+from dataclasses import replace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from redis import Redis
 from sqlalchemy import Engine, select
 
 from bas_assistant.agent.nodes import NO_TICKET_NOTE
 from bas_assistant.db.activity import Audit, Request
-from tests.graph_fakes import ADMIN_TOKEN, FakeProxy, answer_json, ask
+from bas_assistant.runtime import AppRuntime
+from tests.graph_fakes import ADMIN_TOKEN, FakeProxy, answer_json, ask, make_client
 
 pytestmark = pytest.mark.unit
 
@@ -56,6 +60,34 @@ def test_approve_with_a_wrong_token_is_401(client: TestClient, proxy: FakeProxy)
 
 def test_ticket_list_needs_the_admin_token(client: TestClient) -> None:
     assert client.get("/tickets").status_code == 401
+
+
+def test_ticket_list_with_a_wrong_token_is_401(client: TestClient) -> None:
+    assert client.get("/tickets", headers={"X-Admin-Token": "guess"}).status_code == 401
+
+
+def test_the_admin_role_alone_does_not_stand_in_for_the_token(
+    client: TestClient, proxy: FakeProxy
+) -> None:
+    thread_id = _ask_for_ticket(client, proxy)["thread_id"]
+    role_only = {"X-Demo-Role": "admin"}
+
+    approve = client.post(
+        "/approve", json={"thread_id": thread_id, "approve": True}, headers=role_only
+    )
+
+    assert approve.status_code == 401
+    assert client.get("/tickets", headers=role_only).status_code == 401
+    assert client.get("/tickets", headers=_ADMIN).json()[0]["status"] == "proposed"
+
+
+def test_an_empty_configured_token_matches_no_request(runtime: AppRuntime) -> None:
+    client = make_client(replace(runtime, admin_token=SecretStr("")))
+    body = {"thread_id": str(uuid4()), "approve": True}
+
+    assert client.get("/tickets").status_code == 401
+    assert client.get("/tickets", headers={"X-Admin-Token": ""}).status_code == 401
+    assert client.post("/approve", json=body, headers={"X-Demo-Role": "admin"}).status_code == 401
 
 
 def test_approval_with_the_token_resumes_the_graph_and_files_the_ticket(

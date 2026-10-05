@@ -23,7 +23,7 @@ from bas_assistant.observability.tracing import drop_client_details, langfuse_pr
 from bas_assistant.retrieval.embeddings import OpenAIEmbedder
 from bas_assistant.retrieval.rerank import load_reranker
 from bas_assistant.runtime import open_runtime
-from bas_assistant.settings import Settings
+from bas_assistant.settings import ApiDocsSettings, Settings
 
 Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 
@@ -42,8 +42,14 @@ def healthz() -> Health:
     return Health(status="ok")
 
 
-def create_app(lifespan: Lifespan, web_dist: Path = WEB_DIST) -> FastAPI:
-    app = FastAPI(title="bas-assistant", docs_url="/docs", redoc_url=None, lifespan=lifespan)
+def create_app(lifespan: Lifespan, web_dist: Path = WEB_DIST, api_docs: bool = False) -> FastAPI:
+    app = FastAPI(
+        title="bas-assistant",
+        docs_url="/docs" if api_docs else None,
+        redoc_url=None,
+        openapi_url="/openapi.json" if api_docs else None,
+        lifespan=lifespan,
+    )
     app.add_api_route("/healthz", healthz, methods=["GET"], response_model=Health)
     app.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
     app.include_router(agent_api.router)
@@ -87,4 +93,4 @@ async def _serve(app: FastAPI) -> AsyncGenerator[None]:
             tracing.shutdown()  # flushes spans still in the batch
 
 
-app = create_app(_serve)
+app = create_app(_serve, api_docs=ApiDocsSettings().api_docs)

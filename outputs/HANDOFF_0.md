@@ -32,7 +32,7 @@
 - `.claude/settings.json` — deny rules + hooks
 - `.claude/settings.local.json` — additionalDirectories for worktree root (gitignored)
 - `CLAUDE.md` — 81 lines, operating contract, repo layout, branch/worktree map
-- `CLAUDE.local.md` — private context: deadline, drop order, job application context
+- `CLAUDE.local.md` — private context: deadline, drop order
 - `.claude/skills/` — 7 skills: session, handoff, merge, preflight, ci-spend, arch-sync, simplify
 - `.claude/agents/` — 3 agents: reviewer, test-runner, arch-auditor
 - `uv.lock` committed (Python 3.12, all deps resolved)

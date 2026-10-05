@@ -1,5 +1,5 @@
 """Integration behaviour: every dashboard view runs on real Postgres; grafana_reader can read
-the panel views but not the tables or dash_questions (migration 0005); the two cover-letter
+the panel views but not the tables or dash_questions (migration 0005); the two adoption
 percentages count each answered question once."""
 
 from __future__ import annotations

@@ -139,7 +139,7 @@ VIEWS: dict[str, str] = {
     "dash_tickets_status": """
         SELECT status, count(*) AS tickets FROM tickets GROUP BY 1
     """,
-    # The cover letter's first number, as a share of answered questions (docs/ARCHITECTURE §10).
+    # The first adoption number, as a share of answered questions (docs/ARCHITECTURE §10).
     # Each answer counts once, with its latest vote.
     "dash_feedback_weekly": """
         SELECT date_trunc('week', q.created_at, 'UTC') AS week,

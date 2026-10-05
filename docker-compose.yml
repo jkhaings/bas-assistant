@@ -18,6 +18,10 @@ services:
     build: .
     image: bas-assistant-app:local
     env_file: ${HOME}/.bas-assistant.env
+    environment:
+      # /docs and /openapi.json, for local development only: docker-compose.prod.yml leaves
+      # this unset, so the droplet does not serve them.
+      API_DOCS: "true"
     depends_on:
       migrate:
         condition: service_completed_successfully
