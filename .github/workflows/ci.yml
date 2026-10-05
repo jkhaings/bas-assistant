@@ -13,6 +13,10 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      # uv hard-links packages from its cache on Linux, and nltk refuses to open a file with
+      # more than one link, which fails the chunker test on llama-index's bundled stopwords.
+      UV_LINK_MODE: copy
     steps:
       - uses: actions/checkout@v4
         with:

@@ -611,7 +611,7 @@ Streamlit removed from the stack (Sep 26): Grafana's Postgres data source covers
     of 70 PDFs. With the app stopped, it runs in a one-off container
     (`docker compose run --rm --no-deps -T app python -m bas_assistant.ingest`), and `make ingest`
     afterwards confirms that every source is unchanged. README runbook, "Re-index".
-- **CI**: one GitHub Actions workflow, one job (pull_request only, concurrency cancel-in-progress): gitleaks, ruff, mypy, `pytest -m unit`, then `npm ci`, `npm test` and `npm run build` in `web/` (session E). uv and npm caches on. No LLM calls, no image push, no `secrets.` refs.
+- **CI**: one GitHub Actions workflow, one job (pull_request only, concurrency cancel-in-progress): gitleaks, ruff, mypy, `pytest -m unit`, then `npm ci`, `npm test` and `npm run build` in `web/` (session E). uv and npm caches on. `UV_LINK_MODE=copy`, because nltk refuses the hard-linked files uv installs by default on Linux. No LLM calls, no image push, no `secrets.` refs.
 - **Abuse controls (public link)**: per-IP sliding-window rate limit, global daily USD cap (demo pauses with a message and a reset time), vendor-side hard spend limits on every key, exact-match cache, `max_tokens` caps. Admin token required for /approve.
 - **Stretch (optional session)**: Terraform → Azure Container Apps + Key Vault + App Insights, Entra ID OIDC login replacing the role switcher. Adds the Microsoft names to the story; not needed for the demo link.
 

@@ -197,6 +197,46 @@ and a comment, the unit tier already imports both, and the Docker disk had no ro
 Also skipped: any browser click-through, and any check of this branch on the live site, which
 does not change until it is deployed.
 
+## CI
+
+The pull request's first run was the first CI run this repo has had. It failed at `pytest unit`
+on a test this branch does not touch:
+
+```
+FAILED tests/unit/test_chunking.py::test_oversized_section_splits_into_multiple_parents - PermissionError: Security Violation [pathsec.open]: refusing multiply-linked file '.../site-packages/llama_index/core/_static/nltk_cache/corpora/stopwords/english' (st_nlink=2)
+1 failed, 282 passed, 63 deselected, 8 warnings in 34.87s
+```
+
+nltk 3.10.3 refuses to open a file with more than one hard link, and on Linux `uv sync` hard-links
+packages from its cache. macOS clones them and the Dockerfile's build copies them, so neither the
+laptop nor the image saw it. The second commit sets `UV_LINK_MODE: copy` for the job.
+
+Reproduced and fixed on Linux before pushing, in `python:3.12-slim-bookworm` with uv 0.11.16 and
+the locked llama-index-core, nltk and pydantic, running `tests/unit/test_chunking.py`:
+
+```
+--- as CI ran it
+UV_LINK_MODE=unset (uv default on Linux: hardlink)  ->  link count of the nltk stopwords file: 2
+FAILED ::test_oversized_section_splits_into_multiple_parents - PermissionErro...
+1 failed, 5 passed, 1 warning in 3.90s
+--- with the fix
+UV_LINK_MODE=copy  ->  link count of the nltk stopwords file: 1
+6 passed, 1 warning in 3.49s
+```
+
+The Node steps were skipped in that first run, so they were run in `node:24-slim` from a clean
+copy of the branch:
+
+```
+node v24.21.0, npm 11.19.0, Linux aarch64
+$ npm ci
+$ npm test
+ Test Files  8 passed (8)
+      Tests  35 passed (35)
+$ npm run build
+✓ built in 1.86s
+```
+
 ## Deferred
 
 - `make eval` and `make redteam`: not run. They call live models, and nothing here changes
